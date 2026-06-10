@@ -11,19 +11,31 @@ from omegaconf import DictConfig, OmegaConf
 
 
 class DigitImageCollector:
-    """Collect one DIGIT frame per keypress."""
+    """Collect DIGIT frames in single-frame or continuous recording mode."""
+
+    CAPTURE_MODES = {"continuous", "single_frame"}
 
     def __init__(self, cfg: dict[str, Any]) -> None:
         self.sensor_cfg = cfg["sensor"]
+        self.capture_cfg = cfg.get("capture", {})
         self.gui_cfg = cfg["gui"]
         self.labels = {str(key): value for key, value in cfg["labels"].items()}
         self.target_dir = Path(cfg["target_dir"])
         self.window_name = str(self.gui_cfg["window_name"])
+        self.capture_mode = str(self.capture_cfg.get("mode", "continuous"))
+        if self.capture_mode not in self.CAPTURE_MODES:
+            valid_modes = ", ".join(sorted(self.CAPTURE_MODES))
+            raise ValueError(
+                f"Unknown capture mode {self.capture_mode!r}. Use one of: {valid_modes}."
+            )
+
         self.camera: Any | None = None
         self.camera_source: str | None = None
         self.window_ready = False
         self.saved_count = 0
-        self.status = "Press 0-6 to save, r to reinit, q/esc to quit."
+        self.recording_key: str | None = None
+        self.recording_saved_count = 0
+        self.status = self._idle_status()
 
         self.target_dir.mkdir(parents=True, exist_ok=True)
         for label in self.labels.values():
@@ -43,6 +55,7 @@ class DigitImageCollector:
                     continue
 
                 self._require_expected_size(frame)
+                self._save_recording_frame(frame)
                 preview = self._draw_preview(frame)
                 self._ensure_window(preview)
                 cv2.imshow(self.window_name, preview)
@@ -74,6 +87,8 @@ class DigitImageCollector:
         self.camera = camera
         self.camera_source = source
         self.window_ready = False
+        self.recording_key = None
+        self.recording_saved_count = 0
         self.status = (
             f"Camera {source}: "
             f"{int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
@@ -146,10 +161,46 @@ class DigitImageCollector:
         if char.lower() == "r":
             self._open_camera()
         elif char in self.labels and frame is not None:
-            self._save_frame(char, frame)
+            if self.capture_mode == "continuous":
+                self._toggle_recording(char)
+            else:
+                self._save_frame(char, frame)
         return False
 
-    def _save_frame(self, key: str, frame: Any) -> None:
+    def _toggle_recording(self, key: str) -> None:
+        if self.recording_key == key:
+            self._stop_recording()
+        else:
+            self._start_recording(key)
+
+    def _start_recording(self, key: str) -> None:
+        self.recording_key = key
+        self.recording_saved_count = 0
+        class_name = self._class_name(key)
+        self.status = f"Recording {class_name}. Press {key} to stop."
+        print(self.status)
+
+    def _stop_recording(self) -> None:
+        if self.recording_key is None:
+            return
+
+        class_name = self._class_name(self.recording_key)
+        saved_count = self.recording_saved_count
+        self.recording_key = None
+        self.recording_saved_count = 0
+        self.status = f"Stopped {class_name} after {saved_count} frame(s)."
+        print(self.status)
+
+    def _save_recording_frame(self, frame: Any) -> None:
+        if self.recording_key is None:
+            return
+
+        class_name = self._class_name(self.recording_key)
+        self._save_frame(self.recording_key, frame, announce=False)
+        self.recording_saved_count += 1
+        self.status = f"Recording {class_name}: saved {self.recording_saved_count} frame(s)."
+
+    def _save_frame(self, key: str, frame: Any, *, announce: bool = True) -> None:
         label = self.labels[key]
         class_name = str(label["class_name"])
         timestamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S_%f")
@@ -160,7 +211,11 @@ class DigitImageCollector:
 
         self.saved_count += 1
         self.status = f"Saved {class_name}: {output_path.name}"
-        print(self.status)
+        if announce:
+            print(self.status)
+
+    def _class_name(self, key: str) -> str:
+        return str(self.labels[key]["class_name"])
 
     def _require_expected_size(self, frame: Any) -> None:
         expected_width = int(self.sensor_cfg["width"])
@@ -207,10 +262,11 @@ class DigitImageCollector:
         lines += [
             "",
             "CONTROLS",
-            "r: reinit",
-            "q/esc: quit",
-            "",
+            f"mode: {self.capture_mode}",
+            self._class_key_help(),
+            "r: reinit q/esc: quit",
             f"saved: {self.saved_count}",
+            f"rec: {self._recording_class_name()}",
         ]
 
         for line in lines:
@@ -238,10 +294,27 @@ class DigitImageCollector:
             (x, frame_height - 12),
             cv2.FONT_HERSHEY_SIMPLEX,
             font_scale,
-            (120, 220, 120) if self.status.startswith("Saved") else (210, 210, 210),
+            self._status_color(),
             1,
             cv2.LINE_AA,
         )
+
+    def _class_key_help(self) -> str:
+        if self.capture_mode == "continuous":
+            return "0-6: start/stop"
+        return "0-6: save image"
+
+    def _recording_class_name(self) -> str:
+        if self.recording_key is None:
+            return "off"
+        return self._class_name(self.recording_key)
+
+    def _status_color(self) -> tuple[int, int, int]:
+        if self.status.startswith("Recording"):
+            return (80, 190, 255)
+        if self.status.startswith(("Saved", "Stopped")):
+            return (120, 220, 120)
+        return (210, 210, 210)
 
     def _short_status(self) -> str:
         max_chars = max(12, int(self.gui_cfg["side_panel_width"]) // 8)
@@ -249,15 +322,19 @@ class DigitImageCollector:
             return self.status
         return f"{self.status[: max_chars - 3]}..."
 
+    def _idle_status(self) -> str:
+        return f"{self._class_key_help()}, r to reinit, q/esc to quit."
+
     def _wait_delay(self) -> int:
         return int(self.gui_cfg["wait_key_delay_ms"])
 
     def _print_instructions(self) -> None:
         print(f"Saving PNG captures to: {self.target_dir}")
+        print(f"Capture mode: {self.capture_mode}")
         for key in sorted(self.labels, key=int):
             label = self.labels[key]
             print(f"  {key}: {label['class_name']} ({label['display_name']})")
-        print("Press r to reinitialize the sensor. Press q or esc to quit.")
+        print(f"{self._class_key_help()}. Press r to reinitialize the sensor. Press q or esc to quit.")
 
 
 @hydra.main(version_base=None, config_path="../../config", config_name="config")

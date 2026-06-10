@@ -11,6 +11,11 @@ sensor:
   fourcc: YUYV
   warmup_frames: 5
 
+capture:
+  # continuous: class key toggles recording on/off
+  # single_frame: class key saves one image
+  mode: continuous
+
 gui:
   window_name: DIGIT data collector
   wait_key_delay_ms: 1
