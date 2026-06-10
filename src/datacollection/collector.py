@@ -26,6 +26,7 @@ class DigitImageCollector:
         self.window_name = str(self.gui_cfg["window_name"])
         self.camera: Any | None = None
         self.camera_source: int | str | None = None
+        self.window_initialized = False
         self.saved_count = 0
         self.last_status = "Press 0-6 to save, r to reinitialize, q or esc to quit."
 
@@ -38,7 +39,8 @@ class DigitImageCollector:
     def run(self) -> None:
         self._open_camera()
         self._print_instructions()
-
+        # re-opening camera makes it more stable I guess?
+        self._open_camera()
         try:
             while True:
                 ok, frame = self.camera.read()
@@ -50,7 +52,8 @@ class DigitImageCollector:
                     continue
 
                 frame = self._resize_if_needed(frame)
-                preview = self._draw_overlay(frame) if self.gui_cfg["show_overlay"] else frame
+                preview = self._make_preview(frame)
+                self._ensure_window(preview)
                 cv2.imshow(self.window_name, preview)
 
                 key = cv2.waitKey(int(self.gui_cfg["wait_key_delay_ms"])) & 0xFF
@@ -71,6 +74,10 @@ class DigitImageCollector:
         else:
             camera = cv2.VideoCapture(camera_source)
 
+        buffer_size = self.sensor_cfg.get("buffer_size")
+        if buffer_size is not None:
+            camera.set(cv2.CAP_PROP_BUFFERSIZE, int(buffer_size))
+
         fourcc = self.sensor_cfg.get("fourcc")
         if fourcc:
             fourcc_code = cv2.VideoWriter_fourcc(*str(fourcc)[:4])
@@ -90,9 +97,10 @@ class DigitImageCollector:
         actual_width = int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))
         actual_height = int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))
         actual_fps = camera.get(cv2.CAP_PROP_FPS)
+        actual_fourcc = self._fourcc_to_string(int(camera.get(cv2.CAP_PROP_FOURCC)))
         self.last_status = (
             f"Camera initialized: source={camera_source}, "
-            f"{actual_width}x{actual_height}@{actual_fps:.1f}fps"
+            f"{actual_width}x{actual_height}@{actual_fps:.1f}fps, fourcc={actual_fourcc}"
         )
         print(self.last_status)
 
@@ -113,9 +121,11 @@ class DigitImageCollector:
 
         return int(self.sensor_cfg["camera_index"])
 
-    def _find_video_device_by_name(self, expected_name: str) -> str | None:
+    @staticmethod
+    def _find_video_device_by_name(expected_name: str) -> str | None:
         expected_name = expected_name.lower()
         candidates = sorted(glob.glob("/sys/class/video4linux/video*/name"))
+        matches: list[tuple[int, str]] = []
         for name_file in candidates:
             name_path = Path(name_file)
             try:
@@ -126,14 +136,36 @@ class DigitImageCollector:
             if expected_name not in device_name.lower():
                 continue
 
-            return f"/dev/{name_path.parent.name}"
+            matches.append(
+                (
+                    DigitImageCollector._video_device_index(name_path.parent),
+                    f"/dev/{name_path.parent.name}",
+                )
+            )
 
-        return None
+        if not matches:
+            return None
+
+        return sorted(matches)[0][1]
+
+    @staticmethod
+    def _video_device_index(video_dir: Path) -> int:
+        try:
+            return int((video_dir / "index").read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return 999
+
+    @staticmethod
+    def _fourcc_to_string(value: int) -> str:
+        if value <= 0:
+            return "unknown"
+        return "".join(chr((value >> 8 * index) & 0xFF) for index in range(4)).strip()
 
     def _release_camera(self) -> None:
         if self.camera is not None:
             self.camera.release()
             self.camera = None
+        self.window_initialized = False
 
     def _handle_key(self, key: int, frame: Any | None) -> bool:
         if key == 255:
@@ -192,6 +224,94 @@ class DigitImageCollector:
         if width == target_width and height == target_height:
             return frame
         return cv2.resize(frame, (target_width, target_height), interpolation=cv2.INTER_AREA)
+
+    def _ensure_window(self, frame: Any) -> None:
+        if self.window_initialized:
+            return
+
+        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
+        scale = float(self.gui_cfg.get("display_scale", 1))
+        height, width = frame.shape[:2]
+        cv2.resizeWindow(self.window_name, int(width * scale), int(height * scale))
+        self.window_initialized = True
+
+    def _make_preview(self, frame: Any) -> Any:
+        if self.gui_cfg.get("show_side_panel", True):
+            return self._draw_side_panel(frame)
+        if self.gui_cfg["show_overlay"]:
+            return self._draw_overlay(frame)
+        return frame
+
+    def _draw_side_panel(self, frame: Any) -> Any:
+        panel_width = int(self.gui_cfg.get("side_panel_width", 240))
+        preview = cv2.copyMakeBorder(
+            frame,
+            0,
+            0,
+            0,
+            panel_width,
+            cv2.BORDER_CONSTANT,
+            value=(28, 28, 28),
+        )
+
+        x = frame.shape[1] + 12
+        y = 18
+        line_height = 15
+        font_scale = 0.38
+
+        lines = ["CLASSES"]
+        lines.extend(
+            f"{key}: {self.labels[key]['display_name']}"
+            for key in sorted(self.labels, key=int)
+        )
+        lines.extend(
+            [
+                "",
+                "CONTROLS",
+                "r: reinit sensor",
+                "q/esc: quit",
+                "",
+                f"saved: {self.saved_count}",
+            ]
+        )
+
+        for line in lines:
+            if line:
+                color = (
+                    (170, 220, 255)
+                    if line in {"CLASSES", "CONTROLS"}
+                    else (245, 245, 245)
+                )
+                cv2.putText(
+                    preview,
+                    line,
+                    (x, y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    font_scale,
+                    color,
+                    1,
+                    cv2.LINE_AA,
+                )
+            y += line_height
+
+        status = self._truncate_for_panel(self.last_status, panel_width)
+        cv2.putText(
+            preview,
+            status,
+            (x, frame.shape[0] - 12),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            font_scale,
+            (120, 220, 120) if status.startswith("Saved") else (210, 210, 210),
+            1,
+            cv2.LINE_AA,
+        )
+        return preview
+
+    def _truncate_for_panel(self, text: str, panel_width: int) -> str:
+        max_chars = max(12, panel_width // 8)
+        if len(text) <= max_chars:
+            return text
+        return f"{text[: max_chars - 3]}..."
 
     def _draw_overlay(self, frame: Any) -> Any:
         preview = frame.copy()
