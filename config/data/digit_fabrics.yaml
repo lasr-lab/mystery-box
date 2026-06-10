@@ -1,0 +1,21 @@
+name: digit_fabrics
+sensor: DIGIT
+num_classes: 6
+classes:
+  - fabric_01
+  - fabric_02
+  - fabric_03
+  - fabric_04
+  - fabric_05
+  - nothing
+
+input:
+  color_channels: 3
+  height: 240
+  width: 320
+
+# TODO: we will do this differently later
+split:
+  train: 0.7
+  val: 0.15
+  test: 0.15

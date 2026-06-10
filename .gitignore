@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environments
+.venv/
+.env
+
+# IDEs
+.idea/
+.vscode/
+
+# Hydra outputs
+outputs/
+multirun/
+
+# Data artifacts: keep directory placeholders, not large datasets.
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/external/*
+!data/external/.gitkeep
+
+# Model artifacts
+*.ckpt
+*.pt
+*.pth
+*.onnx

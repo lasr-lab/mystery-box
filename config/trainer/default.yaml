@@ -1,0 +1,6 @@
+max_epochs: 25
+batch_size: 16
+learning_rate: 0.0003
+num_workers: 4
+device: auto
+checkpoint_dir: ${paths.output_dir}/checkpoints

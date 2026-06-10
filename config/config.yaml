@@ -1,0 +1,17 @@
+defaults:
+  - data: digit_fabrics
+  - model: baseline_cnn
+  - trainer: default
+  - demo: default
+  - _self_
+
+project:
+  name: SECAI_demo_tactile
+  seed: 42
+
+paths:
+  data_dir: ${hydra:runtime.cwd}/data
+  raw_data_dir: ${paths.data_dir}/raw
+  processed_data_dir: ${paths.data_dir}/processed
+  external_data_dir: ${paths.data_dir}/external
+  output_dir: ${hydra:runtime.output_dir}

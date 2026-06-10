@@ -1,0 +1,6 @@
+name: tactile_demo
+host: 127.0.0.1
+port: 8000
+model_checkpoint: ${model.checkpoint_path}
+prediction_smoothing_window: 5
+show_sensor_preview: true
