@@ -1,35 +1,21 @@
 name: digit_image_collector
 target_dir: ${paths.raw_data_dir}/digit_fabrics
-manifest_filename: manifest.csv
 
 sensor:
-  # Prefer matching the Linux V4L2 device name so the built-in webcam is not
-  # selected when camera indexes change.
   device_name: DIGIT
   device_path: null
-  camera_index: 0
   backend: CAP_V4L2
   fps: 30
   width: 320
   height: 240
   fourcc: YUYV
-  buffer_size: 1
   warmup_frames: 5
-  enforce_frame_size: true
 
 gui:
   window_name: DIGIT data collector
   wait_key_delay_ms: 1
-  show_overlay: false
-  show_side_panel: true
-  side_panel_width: 240
   display_scale: 2
-
-capture:
-  image_extension: jpg
-  jpg_quality: 95
-  png_compression: 3
-  save_manifest: true
+  side_panel_width: 240
 
 labels:
   "0":
