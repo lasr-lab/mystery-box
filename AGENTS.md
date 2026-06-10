@@ -4,15 +4,23 @@
 
 This repository is for a DIGIT tactile sensor demo. The goal is to classify tactile interactions with a 3D-printed sensor against fabrics mounted on a 3D-printed board.
 
-The classification problem has 6 classes:
-- `fabric_01`
-- `fabric_02`
-- `fabric_03`
-- `fabric_04`
-- `fabric_05`
-- `nothing`
+The classification problem currently has 7 classes:
+- `nothing` (displayed as no contact during collection)
+- `cotton`
+- `wool`
+- `curdory`
+- `synthetic_leather`
+- `teddy`
+- `flower_fabric`
 
-Rename the fabric class labels once the real fabric names are known.
+The data collection key mapping is:
+- `0`: `nothing` / no contact
+- `1`: `cotton`
+- `2`: `wool`
+- `3`: `curdory`
+- `4`: `synthetic_leather`
+- `5`: `teddy`
+- `6`: `flower_fabric`
 
 ## Expected Repository Structure
 
@@ -22,6 +30,7 @@ Rename the fabric class labels once the real fabric names are known.
 ├── config/
 │   ├── config.yaml
 │   ├── data/
+│   ├── datacollection/
 │   ├── demo/
 │   ├── model/
 │   └── trainer/
@@ -30,12 +39,14 @@ Rename the fabric class labels once the real fabric names are known.
 │   ├── processed/
 │   └── raw/
 └── src/
+    ├── datacollection/
     ├── demo/
     └── ML/
 ```
 
 ## Directory Responsibilities
 
+- `src/datacollection/`: Data collection code for raw DIGIT captures, including GUI-based single-frame capture tools.
 - `src/demo/`: Demo-facing code, including the web interface for live or recorded DIGIT tactile classification.
 - `src/ML/`: Machine learning code, including training, evaluation, model definitions, dataset handling, and inference utilities.
 - `config/`: Hydra configuration files. Keep runtime parameters in YAML, not hard-coded in Python.
@@ -49,6 +60,7 @@ Use Hydra for experiment, training, and demo configuration.
 
 - Root config: `config/config.yaml`
 - Data config group: `config/data/`
+- Data collection config group: `config/datacollection/`
 - Model config group: `config/model/`
 - Trainer config group: `config/trainer/`
 - Demo config group: `config/demo/`
@@ -59,6 +71,7 @@ Prefer adding a new YAML file to a config group over adding command-line flags o
 
 - Keep data collection, preprocessing, training, inference, and demo UI concerns separated.
 - Treat the `nothing` class as a first-class label, not as missing data.
+- Store data collection captures in class-specific subdirectories under `data/raw/` and keep collection parameters in `config/datacollection/`.
 - Keep raw sensor captures reproducible by recording sensor settings, class label, board position if relevant, and capture timestamp.
 - Avoid committing large data files or model checkpoints unless explicitly requested.
 - Use clear names for runs and checkpoints so demo models can be traced back to training configs.
@@ -68,3 +81,4 @@ Prefer adding a new YAML file to a config group over adding command-line flags o
 - This project currently keeps the package name `src/ML/` because that was requested. If refactoring later, prefer lowercase package names such as `src/ml/`.
 - Keep trainer orchestration in `src/ML/trainer.py` and entry points thin.
 - Keep demo code in `src/demo/` and avoid importing training-only dependencies in the demo path unless required.
+- Keep data collection entry points in `src/datacollection/` and avoid importing training-only dependencies there.

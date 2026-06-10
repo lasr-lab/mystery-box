@@ -3,6 +3,7 @@ defaults:
   - model: baseline_cnn
   - trainer: default
   - demo: default
+  - datacollection: default
   - _self_
 
 project:

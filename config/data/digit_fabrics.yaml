@@ -1,13 +1,14 @@
 name: digit_fabrics
 sensor: DIGIT
-num_classes: 6
+num_classes: 7
 classes:
-  - fabric_01
-  - fabric_02
-  - fabric_03
-  - fabric_04
-  - fabric_05
   - nothing
+  - cotton
+  - wool
+  - curdory
+  - synthetic_leather
+  - teddy
+  - flower_fabric
 
 input:
   color_channels: 3
