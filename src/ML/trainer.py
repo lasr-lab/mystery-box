@@ -83,6 +83,7 @@ class Trainer:
         criterion = nn.CrossEntropyLoss()
         optimizer = self._make_optimizer()
         max_epochs = int(self.trainer_cfg.max_epochs)
+        scheduler = self._make_scheduler(optimizer, total_steps=len(train_loader) * max_epochs)
         best_val_accuracy = -1.0
         best_epoch = 0
 
@@ -90,11 +91,14 @@ class Trainer:
         try:
             LOGGER.info("Training for %d epoch(s)", max_epochs)
             for epoch in range(1, max_epochs + 1):
-                train_metrics = self.train_one_epoch(train_loader, criterion, optimizer)
+                train_metrics = self.train_one_epoch(train_loader, criterion, optimizer, scheduler)
                 val_metrics = self.evaluate(val_loader, criterion)
+                learning_rate = self._get_learning_rate(optimizer)
 
                 metrics = {
                     "epoch": epoch,
+                    "lr": learning_rate,
+                    "train/lr": learning_rate,
                     "train/loss": train_metrics["loss"],
                     "train/accuracy": train_metrics["accuracy"],
                     "val/loss": val_metrics["loss"],
@@ -104,15 +108,16 @@ class Trainer:
                 if val_metrics["accuracy"] > best_val_accuracy:
                     best_val_accuracy = float(val_metrics["accuracy"])
                     best_epoch = epoch
-                    self._save_checkpoint(epoch, optimizer, best_val_accuracy)
+                    self._save_checkpoint(epoch, optimizer, scheduler, best_val_accuracy)
 
                 metrics["best/val_accuracy"] = best_val_accuracy
                 metrics["best/epoch"] = best_epoch
                 self._log_epoch(metrics, val_metrics["targets"], val_metrics["predictions"])
                 LOGGER.info(
-                    "epoch %03d/%03d train_loss=%.4f train_acc=%.4f val_loss=%.4f val_acc=%.4f",
+                    "epoch %03d/%03d lr=%.6g train_loss=%.4f train_acc=%.4f val_loss=%.4f val_acc=%.4f",
                     epoch,
                     max_epochs,
+                    learning_rate,
                     train_metrics["loss"],
                     train_metrics["accuracy"],
                     val_metrics["loss"],
@@ -136,7 +141,13 @@ class Trainer:
             if self.wandb_run is not None:
                 self.wandb_run.finish()
 
-    def train_one_epoch(self, loader: DataLoader, criterion: nn.Module, optimizer: torch.optim.Optimizer) -> dict[str, float]:
+    def train_one_epoch(
+        self,
+        loader: DataLoader,
+        criterion: nn.Module,
+        optimizer: torch.optim.Optimizer,
+        scheduler: Optional[Any] = None,
+    ) -> dict[str, float]:
         self.model.train()
         total_loss = 0.0
         correct = 0
@@ -151,6 +162,8 @@ class Trainer:
             loss = criterion(logits, labels)
             loss.backward()
             optimizer.step()
+            if scheduler is not None:
+                scheduler.step()
 
             batch_size = labels.size(0)
             total_loss += float(loss.item()) * batch_size
@@ -227,6 +240,45 @@ class Trainer:
             return torch.optim.AdamW(self.model.parameters(), lr=learning_rate, weight_decay=weight_decay)
         raise ValueError(f"Unsupported optimizer '{optimizer_name}'. Use 'adamw' or 'adam'.")
 
+    def _make_scheduler(self, optimizer: torch.optim.Optimizer, total_steps: int) -> Optional[Any]:
+        scheduler_name = str(getattr(self.trainer_cfg, "lr_scheduler", "cosine")).lower()
+        if scheduler_name in {"none", "off", "disabled"}:
+            return None
+        if scheduler_name != "cosine":
+            raise ValueError(f"Unsupported lr_scheduler '{scheduler_name}'. Use 'cosine' or 'none'.")
+
+        if total_steps < 1:
+            raise ValueError("total training steps must be at least 1.")
+
+        warmup_fraction = float(getattr(self.trainer_cfg, "lr_warmup_fraction", 0.1))
+        if not 0.0 <= warmup_fraction < 1.0:
+            raise ValueError("trainer.lr_warmup_fraction must be >= 0.0 and < 1.0.")
+
+        warmup_steps = int(total_steps * warmup_fraction)
+        if warmup_fraction > 0.0 and total_steps > 1:
+            warmup_steps = max(1, min(warmup_steps, total_steps - 1))
+
+        eta_min = float(getattr(self.trainer_cfg, "lr_min", 0.0))
+        if warmup_steps == 0:
+            return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=eta_min)
+
+        warmup = torch.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=float(getattr(self.trainer_cfg, "lr_warmup_start_factor", 0.001)),
+            end_factor=1.0,
+            total_iters=warmup_steps,
+        )
+        cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(total_steps - warmup_steps, 1),
+            eta_min=eta_min,
+        )
+        return torch.optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[warmup_steps])
+
+    @staticmethod
+    def _get_learning_rate(optimizer: torch.optim.Optimizer) -> float:
+        return float(optimizer.param_groups[0]["lr"])
+
     def _init_wandb(self) -> None:
         wandb_cfg = getattr(self.cfg, "wandb", None)
         if wandb_cfg is None or not bool(getattr(wandb_cfg, "enabled", True)):
@@ -267,7 +319,13 @@ class Trainer:
         if self.wandb_run is not None:
             self.wandb_run.log(metrics)
 
-    def _save_checkpoint(self, epoch: int, optimizer: torch.optim.Optimizer, val_accuracy: float) -> None:
+    def _save_checkpoint(
+        self,
+        epoch: int,
+        optimizer: torch.optim.Optimizer,
+        scheduler: Optional[Any],
+        val_accuracy: float,
+    ) -> None:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         checkpoint = {
             "model_state_dict": self.model.state_dict(),
@@ -280,6 +338,8 @@ class Trainer:
             "model_name": getattr(self.cfg.model, "name", None),
             "config": OmegaConf.to_container(self.cfg, resolve=True),
         }
+        if scheduler is not None:
+            checkpoint["scheduler_state_dict"] = scheduler.state_dict()
         torch.save(checkpoint, self.best_checkpoint_path)
         LOGGER.info("Saved new best checkpoint: path=%s epoch=%d val_accuracy=%.4f", self.best_checkpoint_path, epoch, val_accuracy)
 
