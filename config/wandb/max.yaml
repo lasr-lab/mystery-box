@@ -1,7 +1,7 @@
 enabled: true
-project: tactile_ssl
+project: secai_demo
 entity: mhaufe-tu-dresden
-name: ${experiment_name}
+name: ${model.name}_${now:%Y-%m-%d}
 group: ${model.name}
 mode: online
 save_dir: ${paths.output_dir}
