@@ -114,15 +114,63 @@ def create_datasets(
 
 
 def build_transforms(cfg: Any, train: bool) -> transforms.Compose:
-    """Build resize, tensor conversion, and ImageNet normalization transforms."""
+    """Build image transforms for DIGIT fabric frames."""
 
     data_cfg = _data_cfg(cfg)
     input_cfg = _get(data_cfg, "input")
     normalization = _get(data_cfg, "normalization")
+    augmentations = _get(data_cfg, "augmentations", {})
+    use_augmentations = train and bool(_get(augmentations, "enabled", False))
+    height = int(_get(input_cfg, "height"))
+    width = int(_get(input_cfg, "width"))
 
-    transform_list: list[Any] = [
-        transforms.Resize((int(_get(input_cfg, "height")), int(_get(input_cfg, "width")))),
-    ]
+    transform_list: list[Any] = []
+    if use_augmentations and bool(_get(augmentations, "random_crop", False)):
+        crop_scale = _float_range(
+            augmentations,
+            "random_crop_scale",
+            default=(0.85, 1.0),
+            min_value=0.0,
+            max_value=1.0,
+        )
+        if crop_scale[0] <= 0.0:
+            raise ValueError(f"random_crop_scale values must be > 0, got {crop_scale}.")
+        crop_ratio = _float_range(
+            augmentations,
+            "random_crop_ratio",
+            default=(width / height, width / height),
+            min_value=0.0,
+        )
+        if crop_ratio[0] <= 0.0:
+            raise ValueError(f"random_crop_ratio values must be > 0, got {crop_ratio}.")
+        transform_list.append(
+            transforms.RandomResizedCrop(
+                size=(height, width),
+                scale=crop_scale,
+                ratio=crop_ratio,
+            )
+        )
+    else:
+        transform_list.append(transforms.Resize((height, width)))
+
+    if use_augmentations and bool(_get(augmentations, "random_rotation", False)):
+        transform_list.append(
+            transforms.RandomRotation(
+                degrees=_rotation_degrees(augmentations),
+                interpolation=transforms.InterpolationMode.BILINEAR,
+                fill=0,
+            )
+        )
+
+    if use_augmentations and bool(_get(augmentations, "color_jitter", False)):
+        transform_list.append(
+            transforms.ColorJitter(
+                brightness=_non_negative_float(augmentations, "color_jitter_brightness", default=0.2),
+                contrast=_non_negative_float(augmentations, "color_jitter_contrast", default=0.2),
+                saturation=_non_negative_float(augmentations, "color_jitter_saturation", default=0.2),
+                hue=_color_jitter_hue(augmentations),
+            )
+        )
 
     transform_list.extend(
         [
@@ -133,6 +181,33 @@ def build_transforms(cfg: Any, train: bool) -> transforms.Compose:
             ),
         ]
     )
+
+    if use_augmentations and bool(_get(augmentations, "random_erasing", False)):
+        erasing_scale = _float_range(
+            augmentations,
+            "random_erasing_scale",
+            default=(0.02, 0.12),
+            min_value=0.0,
+            max_value=1.0,
+        )
+        if erasing_scale[0] <= 0.0:
+            raise ValueError(f"random_erasing_scale values must be > 0, got {erasing_scale}.")
+        erasing_ratio = _float_range(
+            augmentations,
+            "random_erasing_ratio",
+            default=(0.3, 3.3),
+            min_value=0.0,
+        )
+        if erasing_ratio[0] <= 0.0:
+            raise ValueError(f"random_erasing_ratio values must be > 0, got {erasing_ratio}.")
+        transform_list.append(
+            transforms.RandomErasing(
+                p=_probability(augmentations, "random_erasing_p", default=0.25),
+                scale=erasing_scale,
+                ratio=erasing_ratio,
+                value=_get(augmentations, "random_erasing_value", 0.0),
+            )
+        )
 
     return transforms.Compose(transform_list)
 
@@ -188,9 +263,14 @@ def _horizontal_flip_p(data_cfg: Any) -> float:
     if not bool(_get(augmentations, "horizontal_flip", False)):
         return 0.0
 
-    probability = float(_get(augmentations, "horizontal_flip_p", 0.5))
+    probability = _probability(augmentations, "horizontal_flip_p", default=0.5)
+    return probability
+
+
+def _probability(cfg: Any, key: str, default: float) -> float:
+    probability = float(_get(cfg, key, default))
     if probability < 0.0 or probability > 1.0:
-        raise ValueError(f"horizontal_flip_p must be in [0, 1], got {probability}.")
+        raise ValueError(f"{key} must be in [0, 1], got {probability}.")
     return probability
 
 
@@ -216,3 +296,54 @@ def _get(cfg: Any, key: str, default: Any = None) -> Any:
     if isinstance(cfg, Mapping):
         return cfg.get(key, default)
     return getattr(cfg, key, default)
+
+
+def _float_range(
+    cfg: Any,
+    key: str,
+    default: tuple[float, float],
+    min_value: Optional[float] = None,
+    max_value: Optional[float] = None,
+) -> tuple[float, float]:
+    value = _get(cfg, key, default)
+    try:
+        values = tuple(float(item) for item in value)
+    except TypeError as exc:
+        raise ValueError(f"{key} must be a two-item numeric range, got {value!r}.") from exc
+
+    if len(values) != 2:
+        raise ValueError(f"{key} must be a two-item numeric range, got {value!r}.")
+    lower, upper = values
+    if lower > upper:
+        raise ValueError(f"{key} lower bound must be <= upper bound, got {values}.")
+    if min_value is not None and lower < min_value:
+        raise ValueError(f"{key} values must be >= {min_value}, got {values}.")
+    if max_value is not None and upper > max_value:
+        raise ValueError(f"{key} values must be <= {max_value}, got {values}.")
+    return values
+
+
+def _rotation_degrees(cfg: Any) -> Union[float, tuple[float, float]]:
+    value = _get(cfg, "random_rotation_degrees", 10.0)
+    if isinstance(value, (int, float)):
+        degrees = float(value)
+        if degrees < 0.0:
+            raise ValueError(f"random_rotation_degrees must be non-negative, got {degrees}.")
+        return degrees
+
+    degrees_range = _float_range(cfg, "random_rotation_degrees", default=(-10.0, 10.0))
+    return degrees_range
+
+
+def _non_negative_float(cfg: Any, key: str, default: float) -> float:
+    value = float(_get(cfg, key, default))
+    if value < 0.0:
+        raise ValueError(f"{key} must be non-negative, got {value}.")
+    return value
+
+
+def _color_jitter_hue(cfg: Any) -> float:
+    hue = float(_get(cfg, "color_jitter_hue", 0.02))
+    if hue < 0.0 or hue > 0.5:
+        raise ValueError(f"color_jitter_hue must be in [0, 0.5], got {hue}.")
+    return hue

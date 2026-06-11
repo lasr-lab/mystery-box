@@ -32,3 +32,19 @@ augmentations:
   enabled: true
   horizontal_flip: true
   horizontal_flip_p: 0.5
+  # more invasive augmentations, also make sure to try without.
+  random_rotation: true
+  random_rotation_degrees: 10.0
+  color_jitter: true
+  color_jitter_brightness: 0.2
+  color_jitter_contrast: 0.2
+  color_jitter_saturation: 0.2
+  color_jitter_hue: 0.02
+  random_crop: true
+  random_crop_scale: [0.85, 1.0]
+  random_crop_ratio: [1.3333333333, 1.3333333333]
+  random_erasing: true
+  random_erasing_p: 0.25
+  random_erasing_scale: [0.02, 0.12]
+  random_erasing_ratio: [0.3, 3.3]
+  random_erasing_value: 0.0
