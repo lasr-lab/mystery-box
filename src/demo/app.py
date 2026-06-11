@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import glob
+import re
 from collections import deque
 from pathlib import Path
 from typing import Any, Optional
@@ -99,10 +100,16 @@ class DigitTactileDemoApp:
         )
 
     def _open_camera(self) -> None:
+        old_camera = self.camera
+        self.camera = None
+        if old_camera is not None:
+            old_camera.release()
+
         source = self._camera_source()
         backend_name = str(self.sensor_cfg.get("backend", "CAP_V4L2"))
         backend = getattr(cv2, backend_name)
-        camera = cv2.VideoCapture(source, backend)
+        capture_source = self._opencv_capture_source(source, backend)
+        camera = cv2.VideoCapture(capture_source, backend)
 
         try:
             fourcc = cv2.VideoWriter_fourcc(*str(self.sensor_cfg["fourcc"])[:4])
@@ -119,7 +126,6 @@ class DigitTactileDemoApp:
             camera.release()
             raise
 
-        old_camera = self.camera
         self.camera = camera
         self.camera_source = source
         self.window_ready = False
@@ -131,8 +137,6 @@ class DigitTactileDemoApp:
             f"{camera.get(cv2.CAP_PROP_FPS):.1f} fps, "
             f"{self._fourcc_to_string(int(camera.get(cv2.CAP_PROP_FOURCC)))}"
         )
-        if old_camera is not None:
-            old_camera.release()
         print(self.status)
 
     def _warm_camera(self, camera: Any, source: str) -> None:
@@ -183,6 +187,20 @@ class DigitTactileDemoApp:
             )
 
         return sorted(matches)[0][1] if matches else None
+
+    @staticmethod
+    def _opencv_capture_source(source: str, backend: int) -> Any:
+        if backend != cv2.CAP_V4L2:
+            return source
+
+        video_device = re.fullmatch(r"/dev/video(\d+)", source)
+        if video_device is not None:
+            return int(video_device.group(1))
+
+        if source.isdecimal():
+            return int(source)
+
+        return source
 
     @staticmethod
     def _device_index(video_dir: Path) -> int:

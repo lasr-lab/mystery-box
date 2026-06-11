@@ -19,5 +19,5 @@ gui:
   display_scale: 2.0
   side_panel_width: 360
 
-aggregate_window_frames: 30
+aggregate_window_frames: 60
 show_sensor_preview: true

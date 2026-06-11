@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import glob
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -70,7 +71,8 @@ class DigitImageCollector:
         self._release_camera()
         source = self._camera_source()
         backend = getattr(cv2, str(self.sensor_cfg["backend"]))
-        camera = cv2.VideoCapture(source, backend)
+        capture_source = self._opencv_capture_source(source, backend)
+        camera = cv2.VideoCapture(capture_source, backend)
 
         fourcc = cv2.VideoWriter_fourcc(*str(self.sensor_cfg["fourcc"])[:4])
         camera.set(cv2.CAP_PROP_FOURCC, fourcc)
@@ -131,6 +133,20 @@ class DigitImageCollector:
             )
 
         return sorted(matches)[0][1] if matches else None
+
+    @staticmethod
+    def _opencv_capture_source(source: str, backend: int) -> Any:
+        if backend != cv2.CAP_V4L2:
+            return source
+
+        video_device = re.fullmatch(r"/dev/video(\d+)", source)
+        if video_device is not None:
+            return int(video_device.group(1))
+
+        if source.isdecimal():
+            return int(source)
+
+        return source
 
     @staticmethod
     def _device_index(video_dir: Path) -> int:
