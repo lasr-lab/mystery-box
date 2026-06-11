@@ -1,6 +1,11 @@
-max_epochs: 25
-batch_size: 16
+max_epochs: 51
+batch_size: 128
 learning_rate: 0.0003
+weight_decay: 0.01
+optimizer: adamw
 num_workers: 4
 device: auto
 checkpoint_dir: ${paths.output_dir}/checkpoints
+log_level: INFO
+log_file: ${paths.output_dir}/train.log
+evaluate_test: true

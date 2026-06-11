@@ -3,7 +3,7 @@ from __future__ import annotations
 import glob
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import cv2
 import hydra
@@ -29,11 +29,11 @@ class DigitImageCollector:
                 f"Unknown capture mode {self.capture_mode!r}. Use one of: {valid_modes}."
             )
 
-        self.camera: Any | None = None
-        self.camera_source: str | None = None
+        self.camera: Optional[Any] = None
+        self.camera_source: Optional[str] = None
         self.window_ready = False
         self.saved_count = 0
-        self.recording_key: str | None = None
+        self.recording_key: Optional[str] = None
         self.recording_saved_count = 0
         self.status = self._idle_status()
 
@@ -113,7 +113,7 @@ class DigitImageCollector:
         return source
 
     @staticmethod
-    def _find_video_device(device_name: str) -> str | None:
+    def _find_video_device(device_name: str) -> Optional[str]:
         matches: list[tuple[int, str]] = []
         for name_file in sorted(glob.glob("/sys/class/video4linux/video*/name")):
             name_path = Path(name_file)
@@ -151,7 +151,7 @@ class DigitImageCollector:
             self.camera = None
         self.window_ready = False
 
-    def _handle_key(self, key: int, frame: Any | None) -> bool:
+    def _handle_key(self, key: int, frame: Optional[Any]) -> bool:
         if key == 255:
             return False
         if key in (27, ord("q"), ord("Q")):

@@ -1,0 +1,5 @@
+name: efficientnet_b0
+pretrained: true
+input_channels: ${data.input.color_channels}
+num_classes: ${data.num_classes}
+checkpoint_path: null

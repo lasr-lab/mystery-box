@@ -22,6 +22,11 @@ The data collection key mapping is:
 - `5`: `teddy`
 - `6`: `flower_fabric`
 
+## Default Environment
+
+- Default Python interpreter: `/home/max/miniforge3/envs/secai_demo_server/bin/python`
+- Activate before running project commands: `source /home/max/miniforge3/bin/activate secai_demo_server`
+
 ## Expected Repository Structure
 
 ```text

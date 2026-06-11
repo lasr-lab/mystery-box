@@ -1,0 +1,9 @@
+enabled: true
+project: tactile_ssl
+entity: mhaufe-tu-dresden
+name: ${experiment_name}
+group: ${model.name}
+mode: online
+save_dir: ${paths.output_dir}
+tags: []
+notes: null

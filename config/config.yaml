@@ -1,7 +1,8 @@
 defaults:
   - data: digit_fabrics
-  - model: baseline_cnn
+  - model: efficientnet_b0
   - trainer: default
+  - wandb: max
   - demo: default
   - datacollection: default
   - _self_
@@ -9,6 +10,8 @@ defaults:
 project:
   name: SECAI_demo_tactile
   seed: 42
+
+experiment_name: ${project.name}_${model.name}
 
 paths:
   data_dir: ${hydra:runtime.cwd}/data
