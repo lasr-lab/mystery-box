@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 import torch
+import wandb
 from omegaconf import OmegaConf
 from torch import nn
 from torch.utils.data import DataLoader
@@ -283,8 +284,6 @@ class Trainer:
         wandb_cfg = getattr(self.cfg, "wandb", None)
         if wandb_cfg is None or not bool(getattr(wandb_cfg, "enabled", True)):
             return
-
-        import wandb
 
         config_dict = OmegaConf.to_container(self.cfg, resolve=True)
         tags = getattr(wandb_cfg, "tags", [])

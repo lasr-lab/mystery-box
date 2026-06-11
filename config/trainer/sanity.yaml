@@ -1,0 +1,15 @@
+max_epochs: 5
+batch_size: 1
+learning_rate: 0.0003
+weight_decay: 0.01
+optimizer: adamw
+lr_scheduler: cosine
+lr_warmup_fraction: 0.1
+lr_warmup_start_factor: 0.001
+lr_min: 0.0
+num_workers: 1
+device: auto
+checkpoint_dir: ${paths.output_dir}/checkpoints
+log_level: INFO
+log_file: ${paths.output_dir}/train.log
+evaluate_test: true

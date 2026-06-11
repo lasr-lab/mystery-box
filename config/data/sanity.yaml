@@ -1,0 +1,50 @@
+name: digit_fabrics
+sensor: DIGIT
+dataset_dir: digit_fabrics
+num_classes: 7
+seed: 42
+classes:
+  - nothing
+  - cotton
+  - wool
+  - curdory
+  - synthetic_leather
+  - teddy
+  - flower_fabric
+
+input:
+  color_channels: 3
+  height: 240
+  width: 320
+
+samples_per_class: 5
+
+split:
+  train: 0.6
+  val: 0.2
+  test: 0.2
+
+normalization:
+  mean: [0.485, 0.456, 0.406]
+  std: [0.229, 0.224, 0.225]
+
+augmentations:
+  enabled: true
+  horizontal_flip: true
+  horizontal_flip_p: 0.5
+  # more invasive augmentations, also make sure to try without.
+  random_rotation: true
+  random_rotation_degrees: 10.0
+  color_jitter: true
+  color_jitter_brightness: 0.2
+  color_jitter_contrast: 0.2
+  color_jitter_saturation: 0.2
+  color_jitter_hue: 0.02
+  random_crop: true
+  random_crop_scale: [0.85, 1.0]
+  random_crop_ratio: [1.3333333333, 1.3333333333]
+  random_erasing: true
+  random_erasing_p: 0.25
+  random_erasing_scale: [0.02, 0.12]
+  random_erasing_ratio: [0.3, 3.3]
+  random_erasing_value: 0.0

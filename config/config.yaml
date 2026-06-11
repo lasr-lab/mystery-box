@@ -3,8 +3,8 @@ defaults:
   - model: efficientnet_b0
   - trainer: default
   - wandb: max
-  - demo: default
-  - datacollection: default
+  - demo: ~
+  - datacollection: ~
   - _self_
 
 project:
