@@ -1,6 +1,23 @@
 name: tactile_demo
-host: 127.0.0.1
-port: 8000
-model_checkpoint: ${model.checkpoint_path}
-prediction_smoothing_window: 5
+model_checkpoint: ${hydra:runtime.cwd}/models/efficientnet_b0.pt
+#model_checkpoint: ${hydra:runtime.cwd}/models/mobilevit_s.pt
+device: auto
+
+sensor:
+  device_name: DIGIT
+  device_path: null
+  backend: CAP_V4L2
+  fps: 30
+  width: 320
+  height: 240
+  fourcc: YUYV
+  warmup_frames: 5
+
+gui:
+  window_name: DIGIT Tactile Demo
+  wait_key_delay_ms: 1
+  display_scale: 2.0
+  side_panel_width: 360
+
+aggregate_window_frames: 30
 show_sensor_preview: true
