@@ -106,14 +106,22 @@ class Trainer:
                     "val/accuracy": val_metrics["accuracy"],
                 }
 
+                is_best_epoch = False
                 if val_metrics["accuracy"] > best_val_accuracy:
                     best_val_accuracy = float(val_metrics["accuracy"])
                     best_epoch = epoch
+                    is_best_epoch = True
                     self._save_checkpoint(epoch, optimizer, scheduler, best_val_accuracy)
 
                 metrics["best/val_accuracy"] = best_val_accuracy
                 metrics["best/epoch"] = best_epoch
-                self._log_epoch(metrics, val_metrics["targets"], val_metrics["predictions"])
+                self._log_epoch(
+                    metrics,
+                    val_metrics["targets"],
+                    val_metrics["predictions"],
+                    step=epoch,
+                    is_best=is_best_epoch,
+                )
                 LOGGER.info(
                     "epoch %03d/%03d lr=%.6g train_loss=%.4f train_acc=%.4f val_loss=%.4f val_acc=%.4f",
                     epoch,
@@ -301,22 +309,37 @@ class Trainer:
         self.wandb_run = wandb.init(**{key: value for key, value in init_kwargs.items() if value is not None})
         LOGGER.info("Initialized wandb run: project=%s mode=%s", getattr(wandb_cfg, "project", None), getattr(wandb_cfg, "mode", None))
 
-    def _log_epoch(self, metrics: dict[str, Union[float, int]], targets: list[int], predictions: list[int]) -> None:
+    def _log_epoch(
+        self,
+        metrics: dict[str, Union[float, int]],
+        targets: list[int],
+        predictions: list[int],
+        *,
+        step: int,
+        is_best: bool,
+    ) -> None:
         log_data: dict[str, Any] = dict(metrics)
         if self.wandb_run is not None and targets:
             import wandb
 
-            log_data["val/confusion_matrix"] = wandb.plot.confusion_matrix(
+            confusion_matrix = wandb.plot.confusion_matrix(
                 probs=None,
                 y_true=targets,
                 preds=predictions,
                 class_names=self.class_names,
             )
-        self._wandb_log(log_data)
+            log_data["val/confusion_matrix"] = confusion_matrix
+            if is_best:
+                log_data["best/confusion_matrix"] = confusion_matrix
+                self.wandb_run.summary["best/confusion_matrix"] = confusion_matrix
+        self._wandb_log(log_data, step=step)
 
-    def _wandb_log(self, metrics: dict[str, Any]) -> None:
+    def _wandb_log(self, metrics: dict[str, Any], step: Optional[int] = None) -> None:
         if self.wandb_run is not None:
-            self.wandb_run.log(metrics)
+            if step is None:
+                self.wandb_run.log(metrics)
+            else:
+                self.wandb_run.log(metrics, step=step)
 
     def _save_checkpoint(
         self,
