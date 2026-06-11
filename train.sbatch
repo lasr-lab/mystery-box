@@ -13,15 +13,18 @@
 
 set -euo pipefail
 
-# Optional: keep logs from different runs separated
 mkdir -p slurm
 
-# Direct Python used in your environment.
 PYTHON_BIN="/data/cat/ws/maha688h-secai_demo/conda_envs/secai_demo_server/bin/python"
+REPO_ROOT="${SLURM_SUBMIT_DIR:-$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")}"
 
-# Ensure we can run from wherever the job is launched.
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$PROJECT_ROOT"
+if [ ! -d "${REPO_ROOT}/src" ]; then
+  echo "Could not locate project root (expected src/ at ${REPO_ROOT})" >&2
+  exit 1
+fi
+
+cd "$REPO_ROOT"
+export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
 if [ ! -x "$PYTHON_BIN" ]; then
   echo "Python not found or not executable: $PYTHON_BIN" >&2
@@ -32,4 +35,4 @@ export PYTHONFAULTHANDLER=1
 export HYDRA_FULL_ERROR=1
 
 echo "Using Python: $PYTHON_BIN"
-srun "$PYTHON_BIN" -m src.ML.train "$@"
+PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON_BIN" -m src.ML.train "$@"
