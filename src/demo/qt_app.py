@@ -850,8 +850,17 @@ class DigitTactileQtWindow(QMainWindow):
                 color: #f4efe6;
                 border: 1px solid #3a5969;
                 border-radius: 8px;
-                padding: 6px 10px;
+                padding: 6px 12px;
                 min-width: 104px;
+            }
+            QComboBox::drop-down {
+                border: 0;
+                width: 0px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                width: 0px;
+                height: 0px;
             }
             QComboBox QAbstractItemView {
                 background: #17242d;
