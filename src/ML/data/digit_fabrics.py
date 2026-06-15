@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence, Union
@@ -72,8 +71,8 @@ def create_datasets(
     Args:
         cfg: Data config node, or a root config with a ``data`` section.
         raw_data_dir: Path to ``data/raw``.
-        seed: Fixed seed used for class-balanced sampling, splitting, and
-            deterministic train-time augmentation. Defaults to ``cfg.seed``.
+        seed: Fixed seed used for deterministic train-time augmentation.
+            Defaults to ``cfg.seed``.
     """
 
     data_cfg = _data_cfg(cfg)
@@ -93,7 +92,6 @@ def create_datasets(
         classes=class_names,
         samples_per_class=int(_get(data_cfg, "samples_per_class")),
         split_cfg=_get(data_cfg, "split"),
-        seed=dataset_seed,
     )
 
     train_transform = build_transforms(data_cfg, train=True)
@@ -217,13 +215,11 @@ def _make_splits(
     classes: Sequence[str],
     samples_per_class: int,
     split_cfg: Any,
-    seed: int,
 ) -> dict[str, list[ImageSample]]:
     _validate_split(split_cfg)
     if samples_per_class <= 0:
         raise ValueError(f"samples_per_class must be positive, got {samples_per_class}.")
 
-    rng = random.Random(seed)
     splits: dict[str, list[ImageSample]] = {"train": [], "val": [], "test": []}
 
     for label, class_name in enumerate(classes):
@@ -231,6 +227,7 @@ def _make_splits(
         if not class_dir.is_dir():
             raise FileNotFoundError(f"Missing class directory: {class_dir}")
 
+        # no shuffling
         image_paths = sorted(class_dir.glob("*.png"))
         if len(image_paths) < samples_per_class:
             raise ValueError(
@@ -238,7 +235,6 @@ def _make_splits(
                 f"but samples_per_class={samples_per_class}."
             )
 
-        rng.shuffle(image_paths)
         selected_paths = image_paths[:samples_per_class]
         class_samples = [ImageSample(path=path, label=label) for path in selected_paths]
 
@@ -249,9 +245,6 @@ def _make_splits(
         splits["train"].extend(class_samples[:train_count])
         splits["val"].extend(class_samples[train_count:test_start])
         splits["test"].extend(class_samples[test_start:])
-
-    for samples in splits.values():
-        rng.shuffle(samples)
 
     return splits
 
