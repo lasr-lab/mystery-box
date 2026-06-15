@@ -19,12 +19,12 @@ input:
   height: 240
   width: 320
 
-samples_per_class: 1000
+samples_per_class: 3000
 
 split:
   train: 0.7
-  val: 0.15
-  test: 0.15
+  val: 0.2
+  test: 0.10
 
 normalization:
   mean: [0.485, 0.456, 0.406]
