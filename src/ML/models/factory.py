@@ -8,6 +8,13 @@ from typing import Any
 SUPPORTED_MODELS = {
     "efficientnet_b0": "efficientnet_b0",
     "mobilevit_s": "mobilevit_s",
+    "mobilevitv2_050": "mobilevitv2_050",
+    "mobilevitv2_075": "mobilevitv2_075",
+    "mobilevitv2_100": "mobilevitv2_100",
+    "mobilevitv2_125": "mobilevitv2_125",
+    "mobilevitv2_150": "mobilevitv2_150",
+    "mobilevitv2_175": "mobilevitv2_175",
+    "mobilevitv2_200": "mobilevitv2_200",
 }
 
 
