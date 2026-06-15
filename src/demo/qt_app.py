@@ -33,6 +33,7 @@ try:
     from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
     from PySide6.QtWidgets import (
         QApplication,
+        QComboBox,
         QFrame,
         QHBoxLayout,
         QLabel,
@@ -40,6 +41,7 @@ try:
         QPushButton,
         QProgressBar,
         QSizePolicy,
+        QToolButton,
         QVBoxLayout,
         QWidget,
     )
@@ -90,6 +92,110 @@ class ProbabilityRow:
     percent: QLabel
 
 
+LANGUAGE_ALIASES = {
+    "de": "de",
+    "deutsch": "de",
+    "german": "de",
+    "en": "en",
+    "english": "en",
+}
+
+UI_TEXT = {
+    "en": {
+        "window_title": "Can you beat the AI?",
+        "headline": "Can you beat the AI?",
+        "instructions": (
+            "Touch the fabrics hidden in the box. Then take the tactile sensor "
+            "and see if the AI can classify the fabrics correctly."
+        ),
+        "language": "Language:",
+        "language_en": "English",
+        "language_de": "Deutsch",
+        "starting_camera": "Starting camera",
+        "reinitialize": "Reinitialize camera",
+        "reinitializing": "Reinitializing...",
+        "shortcuts": "r: reinit  |  q/esc/ctrl+q: quit",
+        "show_details": "Show details",
+        "hide_details": "Hide details",
+        "camera": "Camera",
+        "inference": "Inference",
+        "loading": "loading",
+        "status_initial": "Starting demo.",
+        "current": "Current",
+        "unavailable": "unavailable",
+        "sensor_preview_disabled": "Sensor preview disabled",
+        "reinitializing_camera": "Reinitializing camera",
+        "frame_unavailable": "Frame unavailable",
+        "frame_unavailable_hint": (
+            "Frame unavailable - press r or Reinitialize camera"
+        ),
+    },
+    "de": {
+        "window_title": "Kannst du die KI schlagen?",
+        "headline": "Kannst du die KI schlagen?",
+        "instructions": (
+            "Ber\u00fchre die Stoffe, die in der Box versteckt sind. Nimm dann den "
+            "taktilen Sensor und pr\u00fcfe, ob die KI die Stoffe richtig "
+            "klassifizieren kann."
+        ),
+        "language": "Sprache:",
+        "language_en": "Englisch",
+        "language_de": "Deutsch",
+        "starting_camera": "Kamera startet",
+        "reinitialize": "Kamera neu starten",
+        "reinitializing": "Kamera startet neu...",
+        "shortcuts": "r: Kamera neu starten  |  q/esc/Strg+q: Beenden",
+        "show_details": "Details anzeigen",
+        "hide_details": "Details ausblenden",
+        "camera": "Kamera",
+        "inference": "Inferenz",
+        "loading": "l\u00e4dt",
+        "status_initial": "Demo startet.",
+        "current": "Aktuell",
+        "unavailable": "nicht verf\u00fcgbar",
+        "sensor_preview_disabled": "Sensorvorschau deaktiviert",
+        "reinitializing_camera": "Kamera startet neu",
+        "frame_unavailable": "Bild nicht verf\u00fcgbar",
+        "frame_unavailable_hint": (
+            "Bild nicht verf\u00fcgbar - r dr\u00fccken oder Kamera neu starten"
+        ),
+    },
+}
+
+CLASS_DISPLAY_NAMES = {
+    "en": {
+        "nothing": "No contact",
+        "cotton": "Cotton",
+        "wool": "Wool",
+        "curdory": "Corduroy",
+        "synthetic_leather": "Synthetic leather",
+        "teddy": "Teddy",
+        "flower_fabric": "Flower fabric",
+        "3dprint": "3D print",
+        "finger": "Finger",
+    },
+    "de": {
+        "nothing": "Kein Kontakt",
+        "cotton": "Baumwolle",
+        "wool": "Wolle",
+        "curdory": "Kord",
+        "synthetic_leather": "Kunstleder",
+        "teddy": "Teddy",
+        "flower_fabric": "Blumenstoff",
+        "3dprint": "3D-Druck",
+        "finger": "Finger",
+    },
+}
+
+
+def _normalize_language(value: Any) -> str:
+    return LANGUAGE_ALIASES.get(str(value).strip().lower(), "en")
+
+
+def _text(language: str, key: str) -> str:
+    return UI_TEXT.get(language, UI_TEXT["en"]).get(key, UI_TEXT["en"][key])
+
+
 class CaptureInferenceWorker(QObject):
     """Owns DIGIT camera capture and model inference on a background Qt thread."""
 
@@ -104,12 +210,14 @@ class CaptureInferenceWorker(QObject):
         model_cfg: dict[str, Any],
         data_cfg: dict[str, Any],
         classifier_cls: Any,
+        language: str,
     ) -> None:
         super().__init__()
         self.demo_cfg = demo_cfg
         self.model_cfg = model_cfg
         self.data_cfg = data_cfg
         self.classifier_cls = classifier_cls
+        self.language = _normalize_language(language)
         self.sensor_cfg = demo_cfg["sensor"]
         self.aggregate_window_frames = max(
             1, int(demo_cfg.get("aggregate_window_frames", 60))
@@ -169,6 +277,10 @@ class CaptureInferenceWorker(QObject):
             self.timer.stop()
         self._release_camera()
 
+    @Slot(str)
+    def set_language(self, language: str) -> None:
+        self.language = _normalize_language(language)
+
     @Slot()
     def reinitialize_camera(self) -> None:
         """Reopen the configured DIGIT camera source."""
@@ -181,7 +293,9 @@ class CaptureInferenceWorker(QObject):
         self.probability_window.clear()
         self.frame_ready.emit(
             self._frame_result(
-                frame_bgr=self._placeholder_frame("Reinitializing camera"),
+                frame_bgr=self._placeholder_frame(
+                    _text(self.language, "reinitializing_camera")
+                ),
                 prediction_label=None,
                 probabilities=None,
             )
@@ -239,7 +353,9 @@ class CaptureInferenceWorker(QObject):
         display_frame = (
             frame
             if self.show_sensor_preview
-            else self._placeholder_frame("Sensor preview disabled")
+            else self._placeholder_frame(
+                _text(self.language, "sensor_preview_disabled")
+            )
         )
         self.frame_ready.emit(
             self._frame_result(
@@ -458,12 +574,12 @@ class CaptureInferenceWorker(QObject):
         frame = (
             self.last_frame.copy()
             if self.last_frame is not None
-            else self._placeholder_frame("Frame unavailable")
+            else self._placeholder_frame(_text(self.language, "frame_unavailable"))
         )
         cv2.rectangle(frame, (0, 0), (frame.shape[1], 34), (0, 0, 0), -1)
         cv2.putText(
             frame,
-            "Frame unavailable - press r or Reinitialize camera",
+            _text(self.language, "frame_unavailable_hint"),
             (10, 23),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.45,
@@ -492,6 +608,7 @@ class DigitTactileQtWindow(QMainWindow):
     """Qt main window that only renders worker results."""
 
     reinitialize_requested = Signal()
+    language_changed = Signal(str)
 
     def __init__(
         self,
@@ -503,6 +620,15 @@ class DigitTactileQtWindow(QMainWindow):
         super().__init__()
         self.demo_cfg = demo_cfg
         self.classifier_cls = classifier_cls
+        self.language = self._initial_language()
+        configured_window_name = str(
+            demo_cfg.get("gui", {}).get("window_name", "")
+        ).strip()
+        self._custom_window_name = configured_window_name
+        self._use_translated_window_title = (
+            not configured_window_name
+            or configured_window_name == "DIGIT Tactile Demo"
+        )
         self.aggregate_window_frames = max(
             1, int(demo_cfg.get("aggregate_window_frames", 60))
         )
@@ -510,13 +636,17 @@ class DigitTactileQtWindow(QMainWindow):
         self.current_rows: list[ProbabilityRow] = []
         self.aggregate_rows: list[ProbabilityRow] = []
         self.last_pixmap: Optional[QPixmap] = None
+        self._last_camera_source: Optional[str] = None
+        self._last_device: Optional[str] = None
+        self._last_status = "Starting demo."
+        self._last_current_label: Optional[str] = None
+        self._last_current_probabilities: Optional[np.ndarray] = None
+        self._last_aggregate_probabilities: Optional[np.ndarray] = None
+        self._last_aggregate_count = 0
         self._fatal_error_seen = False
         self._reinitialize_pending = True
         self._worker_stopping = False
 
-        self.setWindowTitle(
-            str(demo_cfg.get("gui", {}).get("window_name", "DIGIT Tactile Demo"))
-        )
         self.resize(1120, 700)
         self._build_ui()
         self._setup_worker(demo_cfg, model_cfg, data_cfg)
@@ -535,7 +665,7 @@ class DigitTactileQtWindow(QMainWindow):
         video_layout.setContentsMargins(12, 12, 12, 12)
         video_layout.setSpacing(10)
 
-        self.video_label = QLabel("Starting camera", video_panel)
+        self.video_label = QLabel(video_panel)
         self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.video_label.setMinimumSize(640, 480)
         self.video_label.setSizePolicy(
@@ -546,14 +676,13 @@ class DigitTactileQtWindow(QMainWindow):
         video_layout.addWidget(self.video_label, stretch=1)
 
         controls_layout = QHBoxLayout()
-        self.reinitialize_button = QPushButton("Reinitialize camera", video_panel)
+        self.reinitialize_button = QPushButton(video_panel)
         self.reinitialize_button.clicked.connect(self._request_reinitialize)
-        self._set_reinitialize_pending(True)
         controls_layout.addWidget(self.reinitialize_button)
         controls_layout.addStretch(1)
-        shortcuts = QLabel("r: reinit  |  q/esc/ctrl+q: quit", video_panel)
-        shortcuts.setObjectName("shortcutLabel")
-        controls_layout.addWidget(shortcuts)
+        self.shortcuts_label = QLabel(video_panel)
+        self.shortcuts_label.setObjectName("shortcutLabel")
+        controls_layout.addWidget(self.shortcuts_label)
         video_layout.addLayout(controls_layout)
         root_layout.addWidget(video_panel, stretch=3)
 
@@ -565,35 +694,67 @@ class DigitTactileQtWindow(QMainWindow):
         side_layout.setContentsMargins(18, 18, 18, 18)
         side_layout.setSpacing(12)
 
-        title = QLabel("DIGIT Tactile Demo", side_panel)
-        title.setObjectName("titleLabel")
-        side_layout.addWidget(title)
+        language_layout = QHBoxLayout()
+        language_layout.addStretch(1)
+        self.language_label = QLabel(side_panel)
+        self.language_label.setObjectName("languageLabel")
+        self.language_combo = QComboBox(side_panel)
+        self._refresh_language_combo()
+        self.language_combo.currentIndexChanged.connect(
+            self._handle_language_changed
+        )
+        language_layout.addWidget(self.language_label)
+        language_layout.addWidget(self.language_combo)
+        side_layout.addLayout(language_layout)
 
-        self.camera_label = QLabel("camera: -", side_panel)
-        self.inference_label = QLabel("inference: loading", side_panel)
-        self.status_label = QLabel("Starting demo.", side_panel)
+        self.title_label = QLabel(side_panel)
+        self.title_label.setObjectName("titleLabel")
+        self.title_label.setWordWrap(True)
+        side_layout.addWidget(self.title_label)
+
+        self.instructions_label = QLabel(side_panel)
+        self.instructions_label.setObjectName("instructionsLabel")
+        self.instructions_label.setWordWrap(True)
+        side_layout.addWidget(self.instructions_label)
+
+        self.details_toggle = QToolButton(side_panel)
+        self.details_toggle.setObjectName("detailsToggle")
+        self.details_toggle.setCheckable(True)
+        self.details_toggle.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self.details_toggle.toggled.connect(self._set_details_visible)
+        side_layout.addWidget(self.details_toggle)
+
+        self.details_content = QWidget(side_panel)
+        details_layout = QVBoxLayout(self.details_content)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_layout.setSpacing(12)
+
+        self.camera_label = QLabel(side_panel)
+        self.inference_label = QLabel(side_panel)
+        self.status_label = QLabel(side_panel)
         self.status_label.setWordWrap(True)
-        side_layout.addWidget(self.camera_label)
-        side_layout.addWidget(self.inference_label)
-        side_layout.addWidget(self.status_label)
+        details_layout.addWidget(self.camera_label)
+        details_layout.addWidget(self.inference_label)
+        details_layout.addWidget(self.status_label)
 
-        side_layout.addWidget(self._separator(side_panel))
+        details_layout.addWidget(self._separator(self.details_content))
 
-        self.current_title = QLabel("CURRENT: unavailable", side_panel)
+        self.current_title = QLabel(side_panel)
         self.current_title.setObjectName("sectionTitle")
-        side_layout.addWidget(self.current_title)
-        self.current_rows_container = QWidget(side_panel)
+        details_layout.addWidget(self.current_title)
+        self.current_rows_container = QWidget(self.details_content)
         self.current_rows_layout = QVBoxLayout(self.current_rows_container)
         self.current_rows_layout.setContentsMargins(0, 0, 0, 0)
         self.current_rows_layout.setSpacing(6)
-        side_layout.addWidget(self.current_rows_container)
+        details_layout.addWidget(self.current_rows_container)
+
+        side_layout.addWidget(self.details_content)
 
         side_layout.addWidget(self._separator(side_panel))
 
-        self.aggregate_title = QLabel(
-            f"AGG 0/{self.aggregate_window_frames}: unavailable",
-            side_panel,
-        )
+        self.aggregate_title = QLabel(side_panel)
         self.aggregate_title.setObjectName("sectionTitle")
         side_layout.addWidget(self.aggregate_title)
         self.aggregate_rows_container = QWidget(side_panel)
@@ -605,6 +766,10 @@ class DigitTactileQtWindow(QMainWindow):
 
         root_layout.addWidget(side_panel, stretch=1)
         self._apply_styles()
+        self._apply_translations()
+        self._set_details_visible(False)
+        self._set_reinitialize_pending(True)
+        self._set_status_style(self._last_status)
 
     def _separator(self, parent: QWidget) -> QFrame:
         separator = QFrame(parent)
@@ -631,9 +796,17 @@ class DigitTactileQtWindow(QMainWindow):
             }
             QLabel#titleLabel {
                 color: #f8c765;
-                font-size: 24px;
+                font-size: 27px;
                 font-weight: 700;
                 letter-spacing: 0.5px;
+            }
+            QLabel#instructionsLabel {
+                color: #dce8ef;
+                font-size: 16px;
+                line-height: 1.35;
+            }
+            QLabel#languageLabel {
+                color: #9fb3bf;
             }
             QLabel#sectionTitle {
                 font-size: 17px;
@@ -661,6 +834,30 @@ class DigitTactileQtWindow(QMainWindow):
             QPushButton:pressed {
                 background: #dba84b;
             }
+            QToolButton#detailsToggle {
+                background: #243642;
+                color: #f4efe6;
+                border: 1px solid #3a5969;
+                border-radius: 8px;
+                padding: 8px 10px;
+                font-weight: 700;
+            }
+            QToolButton#detailsToggle:hover {
+                background: #2b4350;
+            }
+            QComboBox {
+                background: #243642;
+                color: #f4efe6;
+                border: 1px solid #3a5969;
+                border-radius: 8px;
+                padding: 6px 10px;
+                min-width: 104px;
+            }
+            QComboBox QAbstractItemView {
+                background: #17242d;
+                color: #f4efe6;
+                selection-background-color: #2e4654;
+            }
             QFrame#separator {
                 background: #2e4654;
                 max-height: 1px;
@@ -680,6 +877,164 @@ class DigitTactileQtWindow(QMainWindow):
             """
         )
 
+    def _initial_language(self) -> str:
+        gui_cfg = self.demo_cfg.get("gui", {})
+        if not isinstance(gui_cfg, dict):
+            return "en"
+        return _normalize_language(gui_cfg.get("language", "en"))
+
+    def _tr(self, key: str) -> str:
+        return _text(self.language, key)
+
+    def _refresh_language_combo(self) -> None:
+        was_blocked = self.language_combo.blockSignals(True)
+        self.language_combo.clear()
+        self.language_combo.addItem(self._tr("language_en"), "en")
+        self.language_combo.addItem(self._tr("language_de"), "de")
+        index = self.language_combo.findData(self.language)
+        self.language_combo.setCurrentIndex(max(index, 0))
+        self.language_combo.blockSignals(was_blocked)
+
+    def _apply_translations(self) -> None:
+        if self._use_translated_window_title:
+            self.setWindowTitle(self._tr("window_title"))
+        else:
+            self.setWindowTitle(self._custom_window_name)
+
+        if self._fatal_error_seen:
+            self.video_label.setText(self._display_status(self._last_status))
+        elif self.last_pixmap is None:
+            self.video_label.setText(self._tr("starting_camera"))
+
+        self.title_label.setText(self._tr("headline"))
+        self.instructions_label.setText(self._tr("instructions"))
+        self.language_label.setText(self._tr("language"))
+        self.shortcuts_label.setText(self._tr("shortcuts"))
+        self._refresh_language_combo()
+        self._set_details_visible(self.details_toggle.isChecked())
+        self._set_reinitialize_pending(self._reinitialize_pending)
+        self._refresh_runtime_labels()
+        self._refresh_probability_row_labels()
+        self._refresh_prediction_titles()
+
+    def _refresh_runtime_labels(self) -> None:
+        self.camera_label.setText(
+            f"{self._tr('camera')}: {self._last_camera_source or '-'}"
+        )
+        device = (
+            self._last_device
+            if self._last_device is not None
+            else self._tr("loading")
+        )
+        self.inference_label.setText(f"{self._tr('inference')}: {device}")
+        self.status_label.setText(self._display_status(self._last_status))
+
+    def _refresh_prediction_titles(self) -> None:
+        if not self.class_names:
+            self.current_title.setText(
+                f"{self._tr('current')}: {self._tr('unavailable')}"
+            )
+            self.aggregate_title.setText(
+                f"0/{self.aggregate_window_frames}: {self._tr('unavailable')}"
+            )
+            return
+
+        if self._last_current_probabilities is None:
+            self.current_title.setText(
+                f"{self._tr('current')}: {self._tr('unavailable')}"
+            )
+        else:
+            confidence = float(np.max(self._last_current_probabilities))
+            raw_label = self._last_current_label or self._label_for_probabilities(
+                self._last_current_probabilities
+            )
+            self.current_title.setText(
+                f"{self._tr('current')}: {self._display_class_name(raw_label)} "
+                f"({confidence:.0%})"
+            )
+
+        aggregate_probabilities = self._last_aggregate_probabilities
+        if aggregate_probabilities is not None and self._last_aggregate_count > 0:
+            aggregate_label = self._label_for_probabilities(aggregate_probabilities)
+            aggregate_confidence = float(np.max(aggregate_probabilities))
+            self.aggregate_title.setText(
+                f"{self._last_aggregate_count}/{self.aggregate_window_frames}: "
+                f"{self._display_class_name(aggregate_label)} "
+                f"({aggregate_confidence:.0%})"
+            )
+        else:
+            self.aggregate_title.setText(
+                f"0/{self.aggregate_window_frames}: {self._tr('unavailable')}"
+            )
+
+    def _refresh_probability_row_labels(self) -> None:
+        for index, class_name in enumerate(self.class_names):
+            if index < len(self.current_rows):
+                self.current_rows[index].label.setText(
+                    self._display_class_name(class_name)
+                )
+            if index < len(self.aggregate_rows):
+                self.aggregate_rows[index].label.setText(
+                    self._display_class_name(class_name)
+                )
+
+    @Slot(bool)
+    def _set_details_visible(self, visible: bool) -> None:
+        self.details_content.setVisible(visible)
+        self.details_toggle.setChecked(visible)
+        self.details_toggle.setArrowType(
+            Qt.ArrowType.DownArrow if visible else Qt.ArrowType.RightArrow
+        )
+        self.details_toggle.setText(
+            self._tr("hide_details") if visible else self._tr("show_details")
+        )
+
+    @Slot(int)
+    def _handle_language_changed(self, index: int) -> None:
+        language = _normalize_language(self.language_combo.itemData(index))
+        if language == self.language:
+            return
+
+        self.language = language
+        self._apply_translations()
+        self.language_changed.emit(language)
+
+    def _display_class_name(self, class_name: str) -> str:
+        display_names = CLASS_DISPLAY_NAMES.get(
+            self.language,
+            CLASS_DISPLAY_NAMES["en"],
+        )
+        if class_name in display_names:
+            return display_names[class_name]
+        humanized = class_name.replace("_", " ")
+        return humanized[:1].upper() + humanized[1:]
+
+    def _display_status(self, status: str) -> str:
+        if self.language == "en":
+            return status
+
+        if status == "Starting demo.":
+            return self._tr("status_initial")
+        if status == "Reinitializing camera...":
+            return self._tr("reinitializing")
+        if status.startswith("Camera reinit failed:"):
+            return f"Kamera-Neustart fehlgeschlagen:{status.split(':', 1)[1]}"
+        if status.startswith("Frame read failed."):
+            return (
+                "Bild konnte nicht gelesen werden. Dr\u00fccke r oder starte die "
+                "Kamera neu."
+            )
+        if status.startswith("Inference failed:"):
+            return f"Inferenz fehlgeschlagen:{status.split(':', 1)[1]}"
+        if status.startswith("Classifier load failed:"):
+            return (
+                "Klassifikator konnte nicht geladen werden:"
+                f"{status.split(':', 1)[1]}"
+            )
+        if status.startswith("Camera "):
+            return f"Kamera {status[len('Camera '):]}"
+        return status
+
     def _setup_worker(
         self,
         demo_cfg: dict[str, Any],
@@ -692,6 +1047,7 @@ class DigitTactileQtWindow(QMainWindow):
             model_cfg,
             data_cfg,
             self.classifier_cls,
+            self.language,
         )
         self.worker.moveToThread(self.worker_thread)
 
@@ -701,6 +1057,7 @@ class DigitTactileQtWindow(QMainWindow):
         self.worker.status_changed.connect(self._handle_status)
         self.worker.fatal_error.connect(self._handle_fatal_error)
         self.reinitialize_requested.connect(self.worker.reinitialize_camera)
+        self.language_changed.connect(self.worker.set_language)
         self.worker_thread.finished.connect(self.worker.deleteLater)
         self.worker_thread.start()
 
@@ -725,11 +1082,11 @@ class DigitTactileQtWindow(QMainWindow):
     def _set_reinitialize_pending(self, pending: bool) -> None:
         self._reinitialize_pending = pending
         if pending:
-            self.reinitialize_button.setText("Reinitializing...")
+            self.reinitialize_button.setText(self._tr("reinitializing"))
             self.reinitialize_button.setEnabled(False)
             return
 
-        self.reinitialize_button.setText("Reinitialize camera")
+        self.reinitialize_button.setText(self._tr("reinitialize"))
         self.reinitialize_button.setEnabled(
             not self._worker_stopping and not self._fatal_error_seen
         )
@@ -737,25 +1094,28 @@ class DigitTactileQtWindow(QMainWindow):
     @Slot(object)
     def _handle_classifier_ready(self, info: ClassifierInfo) -> None:
         self.class_names = list(info.class_names)
-        self.inference_label.setText(f"inference: {info.device}")
+        self._last_device = info.device
+        self._refresh_runtime_labels()
         self._rebuild_probability_rows()
 
     @Slot(object)
     def _handle_status(self, status: RuntimeStatus) -> None:
         self._set_reinitialize_pending(False)
-        self.camera_label.setText(f"camera: {status.camera_source or '-'}")
+        self._last_camera_source = status.camera_source
         if status.device is not None:
-            self.inference_label.setText(f"inference: {status.device}")
-        self.status_label.setText(status.status)
+            self._last_device = status.device
+        self._last_status = status.status
+        self._refresh_runtime_labels()
         self._set_status_style(status.status)
 
     @Slot(object)
     def _handle_frame_result(self, result: FrameResult) -> None:
         self._set_video_frame(result.frame_bgr)
-        self.camera_label.setText(f"camera: {result.camera_source or '-'}")
+        self._last_camera_source = result.camera_source
         if result.device is not None:
-            self.inference_label.setText(f"inference: {result.device}")
-        self.status_label.setText(result.status)
+            self._last_device = result.device
+        self._last_status = result.status
+        self._refresh_runtime_labels()
         self._set_status_style(result.status)
         self._update_predictions(result)
 
@@ -763,9 +1123,10 @@ class DigitTactileQtWindow(QMainWindow):
     def _handle_fatal_error(self, message: str) -> None:
         self._fatal_error_seen = True
         self._set_reinitialize_pending(False)
-        self.status_label.setText(message)
+        self._last_status = message
+        self._refresh_runtime_labels()
         self._set_status_style(message)
-        self.video_label.setText(message)
+        self.video_label.setText(self._display_status(message))
 
     def _rebuild_probability_rows(self) -> None:
         self._clear_layout(self.current_rows_layout)
@@ -775,6 +1136,7 @@ class DigitTactileQtWindow(QMainWindow):
         zeros = np.zeros(len(self.class_names), dtype=np.float32)
         self._update_probability_rows(self.current_rows, zeros)
         self._update_probability_rows(self.aggregate_rows, zeros)
+        self._refresh_prediction_titles()
 
     def _build_probability_rows(self, layout: QVBoxLayout) -> list[ProbabilityRow]:
         rows: list[ProbabilityRow] = []
@@ -784,7 +1146,7 @@ class DigitTactileQtWindow(QMainWindow):
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(8)
 
-            label = QLabel(class_name, row_widget)
+            label = QLabel(self._display_class_name(class_name), row_widget)
             label.setMinimumWidth(130)
             label.setObjectName("classLabel")
             bar = QProgressBar(row_widget)
@@ -792,7 +1154,9 @@ class DigitTactileQtWindow(QMainWindow):
             bar.setValue(0)
             bar.setTextVisible(False)
             percent = QLabel("0%", row_widget)
-            percent.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            percent.setAlignment(
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            )
             percent.setMinimumWidth(44)
 
             row_layout.addWidget(label)
@@ -806,31 +1170,20 @@ class DigitTactileQtWindow(QMainWindow):
         if not self.class_names:
             return
 
+        self._last_current_label = result.prediction_label
+        self._last_current_probabilities = result.probabilities
+        self._last_aggregate_probabilities = result.aggregate_probabilities
+        self._last_aggregate_count = result.aggregate_count
+
         if result.probabilities is None:
-            self.current_title.setText("CURRENT: unavailable")
             current_probabilities = np.zeros(len(self.class_names), dtype=np.float32)
         else:
-            confidence = float(np.max(result.probabilities))
-            label = result.prediction_label or self._label_for_probabilities(
-                result.probabilities
-            )
-            self.current_title.setText(f"CURRENT: {label} ({confidence:.0%})")
             current_probabilities = result.probabilities
         self._update_probability_rows(self.current_rows, current_probabilities)
 
         aggregate_probabilities = result.aggregate_probabilities
-        if result.aggregate_count > 0:
-            aggregate_label = self._label_for_probabilities(aggregate_probabilities)
-            aggregate_confidence = float(np.max(aggregate_probabilities))
-            self.aggregate_title.setText(
-                f"AGG {result.aggregate_count}/{self.aggregate_window_frames}: "
-                f"{aggregate_label} ({aggregate_confidence:.0%})"
-            )
-        else:
-            self.aggregate_title.setText(
-                f"AGG 0/{self.aggregate_window_frames}: unavailable"
-            )
         self._update_probability_rows(self.aggregate_rows, aggregate_probabilities)
+        self._refresh_prediction_titles()
 
     def _update_probability_rows(
         self,
@@ -895,7 +1248,10 @@ class DigitTactileQtWindow(QMainWindow):
 
     def _set_status_style(self, status: str) -> None:
         status_lower = status.lower()
-        if any(marker in status_lower for marker in ("failed", "unavailable", "could not")):
+        if any(
+            marker in status_lower
+            for marker in ("failed", "unavailable", "could not")
+        ):
             self.status_label.setStyleSheet("color: #ffb36b;")
         elif status.startswith("Camera"):
             self.status_label.setStyleSheet("color: #90d585;")
