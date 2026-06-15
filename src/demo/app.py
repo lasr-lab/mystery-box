@@ -15,6 +15,8 @@ from omegaconf import DictConfig, OmegaConf
 class DigitTactileDemoApp:
     """OpenCV DIGIT tactile classification demo."""
 
+    MIN_SIDE_PANEL_WIDTH = 360
+
     def __init__(
         self,
         demo_cfg: dict[str, Any],
@@ -24,6 +26,7 @@ class DigitTactileDemoApp:
         self.demo_cfg = demo_cfg
         self.sensor_cfg = demo_cfg["sensor"]
         self.gui_cfg = demo_cfg["gui"]
+        self._validate_gui_config()
         self.window_name = str(self.gui_cfg["window_name"])
         self.aggregate_window_frames = max(
             1, int(demo_cfg.get("aggregate_window_frames", 60))
@@ -42,6 +45,45 @@ class DigitTactileDemoApp:
             maxlen=self.aggregate_window_frames
         )
         self.status = "Starting demo."
+
+    def _validate_gui_config(self) -> None:
+        try:
+            side_panel_width = int(self.gui_cfg["side_panel_width"])
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError(
+                "demo.gui.side_panel_width must be an integer "
+                f">= {self.MIN_SIDE_PANEL_WIDTH}."
+            ) from exc
+        if side_panel_width < self.MIN_SIDE_PANEL_WIDTH:
+            raise RuntimeError(
+                "demo.gui.side_panel_width is too small for the OpenCV demo "
+                f"layout: got {side_panel_width}, minimum is "
+                f"{self.MIN_SIDE_PANEL_WIDTH}."
+            )
+
+        try:
+            display_scale = float(self.gui_cfg["display_scale"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "demo.gui.display_scale must be a finite positive number."
+            ) from exc
+        if not np.isfinite(display_scale) or display_scale <= 0.0:
+            raise RuntimeError(
+                "demo.gui.display_scale must be a finite positive number."
+            )
+
+        try:
+            wait_key_delay_ms = int(self.gui_cfg["wait_key_delay_ms"])
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError(
+                "demo.gui.wait_key_delay_ms must be a positive integer. "
+                "Use at least 1 ms so the live preview does not block."
+            ) from exc
+        if wait_key_delay_ms < 1:
+            raise RuntimeError(
+                "demo.gui.wait_key_delay_ms must be a positive integer. "
+                "Use at least 1 ms so the live preview does not block."
+            )
 
     def run(self) -> None:
         self._open_camera()
@@ -256,17 +298,46 @@ class DigitTactileDemoApp:
     def _prediction_probabilities(self, prediction: Any) -> np.ndarray:
         probabilities = prediction.probabilities
         if isinstance(probabilities, dict):
-            probabilities = [probabilities[name] for name in self.class_names]
+            try:
+                probabilities = [probabilities[name] for name in self.class_names]
+            except KeyError as exc:
+                raise RuntimeError(
+                    f"Prediction probabilities are missing class {exc.args[0]!r}."
+                ) from exc
         if hasattr(probabilities, "detach"):
             probabilities = probabilities.detach().cpu().numpy()
 
-        values = np.asarray(probabilities, dtype=np.float32).reshape(-1)
+        try:
+            values = np.asarray(probabilities, dtype=np.float32).reshape(-1)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError(
+                "Prediction probabilities must be a numeric vector."
+            ) from exc
+        self._validate_probability_vector(values)
+        return values
+
+    def _validate_probability_vector(self, values: np.ndarray) -> None:
         if values.shape[0] != len(self.class_names):
             raise RuntimeError(
-                "Prediction probability count does not match class count: "
-                f"{values.shape[0]} != {len(self.class_names)}."
+                "Prediction probability vector length does not match class count: "
+                f"got {values.shape[0]}, expected {len(self.class_names)}."
             )
-        return values
+
+        invalid_indices = np.flatnonzero(~np.isfinite(values))
+        if invalid_indices.size:
+            invalid_values = values[invalid_indices].tolist()
+            raise RuntimeError(
+                "Prediction probability vector contains non-finite value(s) at "
+                f"index(es) {invalid_indices.tolist()}: {invalid_values}."
+            )
+
+        invalid_indices = np.flatnonzero((values < 0.0) | (values > 1.0))
+        if invalid_indices.size:
+            invalid_values = values[invalid_indices].tolist()
+            raise RuntimeError(
+                "Prediction probability vector values must be in [0.0, 1.0]; "
+                f"invalid index(es) {invalid_indices.tolist()}: {invalid_values}."
+            )
 
     def _aggregate_probabilities(self) -> np.ndarray:
         if not self.probability_window:
@@ -300,11 +371,7 @@ class DigitTactileDemoApp:
         aggregate_probabilities: np.ndarray,
     ) -> np.ndarray:
         panel_width = int(self.gui_cfg["side_panel_width"])
-        panel = np.full(
-            (frame.shape[0], panel_width, 3),
-            (28, 28, 28),
-            dtype=np.uint8,
-        )
+        panel = self._new_panel(frame.shape[0], panel_width)
         self._draw_panel(panel, prediction, probabilities, aggregate_probabilities)
 
         if bool(self.demo_cfg.get("show_sensor_preview", True)):
@@ -317,16 +384,19 @@ class DigitTactileDemoApp:
     def _draw_error_preview(self) -> np.ndarray:
         frame = self._error_frame()
         panel_width = int(self.gui_cfg["side_panel_width"])
-        panel = np.full(
-            (frame.shape[0], panel_width, 3),
-            (28, 28, 28),
-            dtype=np.uint8,
-        )
+        panel = self._new_panel(frame.shape[0], panel_width, error=True)
         self._draw_error_panel(panel)
 
         video = frame.copy()
-        self._put_text(video, "Frame unavailable", 20, 30, (80, 190, 255), 0.55, 2)
-        self._put_text(video, self._short_status(video.shape[1]), 20, 54)
+        cv2.rectangle(video, (0, 0), (video.shape[1], 64), (18, 22, 28), -1)
+        self._put_text(video, "Frame unavailable", 20, 30, (80, 190, 255), 0.62, 2)
+        self._put_text(
+            video,
+            self._short_status(video.shape[1]),
+            20,
+            54,
+            (235, 235, 235),
+        )
         return np.hstack((panel, video))
 
     def _error_frame(self) -> np.ndarray:
@@ -339,23 +409,49 @@ class DigitTactileDemoApp:
 
     def _draw_error_panel(self, panel: np.ndarray) -> None:
         height, width = panel.shape[:2]
-        x = 12
-        y = 16
+        x = 14
+        self._draw_header(panel, mode="error")
 
-        self._put_text(panel, "DIGIT TACTILE DEMO", x, y, (170, 220, 255), 0.42, 1)
-        y += 15
-        self._put_text(panel, f"camera: {self.camera_source or '-'}", x, y)
-        y += 12
-        self._put_text(panel, f"inference: {self.classifier.device}", x, y)
-        y += 22
-        self._put_text(panel, "CURRENT: unavailable", x, y, (245, 245, 245), 0.36, 1)
-        y += 18
-        self._put_text(panel, "No frame was read from the sensor.", x, y, (80, 190, 255))
-        y += 14
-        self._put_text(panel, "Press r to reinitialize.", x, y)
+        card_y = 52
+        card_h = max(92, height - card_y - 44)
+        card_h = min(card_h, 132)
+        self._draw_card(panel, x, card_y, width - (2 * x), card_h, (43, 38, 34))
+        cv2.rectangle(
+            panel,
+            (x, card_y),
+            (x + 5, card_y + card_h - 1),
+            (80, 190, 255),
+            -1,
+        )
+        self._put_text(
+            panel,
+            "CAMERA ATTENTION",
+            x + 16,
+            card_y + 21,
+            (130, 210, 255),
+            0.34,
+            1,
+        )
+        self._put_text(panel, "NO FRAME", x + 16, card_y + 56, (245, 245, 245), 0.78, 2)
+        self._put_text(
+            panel,
+            "The DIGIT stream did not return an image.",
+            x + 16,
+            card_y + 82,
+            (220, 220, 220),
+            0.31,
+        )
+        self._put_text(
+            panel,
+            "Press r to reinitialize.",
+            x + 16,
+            card_y + 101,
+            (80, 190, 255),
+            0.34,
+            1,
+        )
 
-        self._put_text(panel, "r: reinit camera   q/esc: quit", x, height - 18)
-        self._put_text(panel, self._short_status(width), x, height - 6, self._status_color())
+        self._draw_status_strip(panel)
 
     def _draw_panel(
         self,
@@ -365,71 +461,251 @@ class DigitTactileDemoApp:
         aggregate_probabilities: np.ndarray,
     ) -> None:
         height, width = panel.shape[:2]
-        x = 12
-        y = 16
-        bottom_reserved = 32
-
-        self._put_text(panel, "DIGIT TACTILE DEMO", x, y, (170, 220, 255), 0.42, 1)
-        y += 15
-        self._put_text(panel, f"camera: {self.camera_source or '-'}", x, y)
-        y += 12
-        self._put_text(panel, f"inference: {self.classifier.device}", x, y)
-        y += 15
-
-        remaining_height = max(80, height - y - bottom_reserved)
-        chart_height = max(28, (remaining_height - 28) // 2)
-
+        margin = 14
         current_label = self._prediction_label(prediction, probabilities)
         current_confidence = float(np.max(probabilities))
-        self._put_text(
-            panel,
-            f"CURRENT: {current_label} ({current_confidence:.0%})",
-            x,
-            y,
-            (245, 245, 245),
-            0.36,
-            1,
-        )
-        y += 10
-        y = self._draw_probability_bars(
-            panel,
-            probabilities,
-            x,
-            y,
-            width - (2 * x),
-            chart_height,
-            (70, 200, 255),
-        )
-        y += 8
+        current_index = int(np.argmax(probabilities))
+        current_accent = self._class_accent(current_index)
 
+        self._draw_header(panel, mode="live")
+        hero_y = 48
+        hero_h = 58
+        self._draw_current_summary(
+            panel,
+            current_label,
+            current_confidence,
+            margin,
+            hero_y,
+            width - (2 * margin),
+            hero_h,
+            current_accent,
+        )
+
+        charts_y = hero_y + hero_h + 8
+        status_h = 33
+        charts_h = max(66, height - charts_y - status_h - 8)
+        gap = 8
+        chart_w = max(120, (width - (2 * margin) - gap) // 2)
+        current_x = margin
+        aggregate_x = current_x + chart_w + gap
+        aggregate_w = max(120, width - margin - aggregate_x)
         aggregate_label = self._label_for_probabilities(aggregate_probabilities)
         aggregate_confidence = float(np.max(aggregate_probabilities))
-        self._put_text(
+
+        self._draw_chart_card(
             panel,
-            (
-                f"AGG {len(self.probability_window)}/"
-                f"{self.aggregate_window_frames}: "
-                f"{aggregate_label} ({aggregate_confidence:.0%})"
-            ),
-            x,
-            y,
-            (245, 245, 245),
-            0.36,
-            1,
+            "CURRENT",
+            f"{current_confidence:.0%}",
+            probabilities,
+            current_x,
+            charts_y,
+            chart_w,
+            charts_h,
+            current_accent,
         )
-        y += 10
-        self._draw_probability_bars(
+        self._draw_chart_card(
             panel,
+            f"AGG {len(self.probability_window)}/{self.aggregate_window_frames}",
+            f"{aggregate_confidence:.0%} {self._display_label(aggregate_label)}",
             aggregate_probabilities,
-            x,
-            y,
-            width - (2 * x),
-            chart_height,
+            aggregate_x,
+            charts_y,
+            aggregate_w,
+            charts_h,
             (120, 220, 120),
         )
 
-        self._put_text(panel, "r: reinit camera   q/esc: quit", x, height - 18)
-        self._put_text(panel, self._short_status(width), x, height - 6, self._status_color())
+        self._draw_status_strip(panel)
+
+    def _new_panel(self, height: int, width: int, error: bool = False) -> np.ndarray:
+        top = np.array((18, 21, 28), dtype=np.float32)
+        bottom = np.array((28, 39, 46), dtype=np.float32)
+        if error:
+            bottom = np.array((42, 35, 34), dtype=np.float32)
+
+        mix = np.linspace(0.0, 1.0, height, dtype=np.float32)[:, None]
+        rows = ((top * (1.0 - mix)) + (bottom * mix)).astype(np.uint8)
+        panel = np.repeat(rows[:, None, :], width, axis=1)
+
+        cv2.circle(panel, (width - 18, 18), 62, (37, 58, 66), -1)
+        cv2.circle(panel, (30, height - 12), 74, (23, 31, 38), -1)
+        return panel
+
+    def _draw_header(self, panel: np.ndarray, mode: str = "live") -> None:
+        mode = mode.lower()
+        _, width = panel.shape[:2]
+        x = 14
+        self._put_text(panel, "DIGIT TACTILE", x, 18, (190, 230, 255), 0.43, 1)
+        subtitle = (
+            "CAMERA ATTENTION" if mode == "error" else "LIVE MATERIAL CLASSIFIER"
+        )
+        self._put_text(
+            panel,
+            subtitle,
+            x,
+            34,
+            (132, 150, 160),
+            0.28,
+            1,
+        )
+
+        if mode == "error":
+            badge_text = "NO FRAME"
+            badge_background = (48, 44, 38)
+            badge_dot = (80, 190, 255)
+            badge_text_color = (195, 235, 255)
+        else:
+            badge_text = "LIVE"
+            badge_background = (32, 62, 54)
+            badge_dot = (120, 235, 160)
+            badge_text_color = (195, 245, 210)
+
+        text_w = cv2.getTextSize(
+            badge_text,
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.25,
+            1,
+        )[0][0]
+        pill_w = max(46, text_w + 28)
+        pill_x = width - pill_w - x
+        self._draw_rounded_rect(
+            panel,
+            pill_x,
+            9,
+            pill_w,
+            18,
+            badge_background,
+            9,
+        )
+        cv2.circle(panel, (pill_x + 11, 18), 3, badge_dot, -1)
+        self._put_text(
+            panel,
+            badge_text,
+            pill_x + 18,
+            21,
+            badge_text_color,
+            0.25,
+            1,
+        )
+
+        info = f"{self.camera_source or '-'}  |  {self.classifier.device}"
+        self._put_text(
+            panel,
+            self._truncate(info, max(18, width // 9)),
+            x,
+            46,
+            (175, 185, 190),
+            0.27,
+            1,
+        )
+
+    def _draw_current_summary(
+        self,
+        panel: np.ndarray,
+        label: str,
+        confidence: float,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        accent_color: tuple[int, int, int],
+    ) -> None:
+        self._draw_card(panel, x, y, width, height, (25, 31, 38))
+        cv2.rectangle(panel, (x, y), (x + width - 1, y + 3), accent_color, -1)
+        self._put_text(panel, "CURRENT TOUCH", x + 12, y + 18, (142, 156, 165), 0.29, 1)
+        self._put_text_fit(
+            panel,
+            self._display_label(label).upper(),
+            x + 12,
+            y + 46,
+            max(40, width - 96),
+            (246, 248, 250),
+            0.72,
+            0.42,
+            2,
+            cv2.FONT_HERSHEY_DUPLEX,
+        )
+        self._draw_confidence_pill(
+            panel,
+            x + width - 76,
+            y + 20,
+            64,
+            25,
+            f"{confidence:.0%}",
+            accent_color,
+        )
+
+    def _draw_chart_card(
+        self,
+        panel: np.ndarray,
+        title: str,
+        summary: str,
+        probabilities: np.ndarray,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        accent_color: tuple[int, int, int],
+    ) -> None:
+        self._draw_card(panel, x, y, width, height, (23, 29, 35))
+        self._put_text(panel, title, x + 9, y + 15, (230, 235, 238), 0.31, 1)
+        self._put_text(
+            panel,
+            self._truncate(summary, max(8, width // 9)),
+            x + 9,
+            y + 29,
+            accent_color,
+            0.27,
+            1,
+        )
+        self._draw_probability_bars(
+            panel,
+            probabilities,
+            x + 9,
+            y + 31,
+            width - 18,
+            max(30, height - 35),
+            accent_color,
+        )
+
+    def _draw_status_strip(self, panel: np.ndarray) -> None:
+        height, width = panel.shape[:2]
+        strip_h = 32
+        y = max(0, height - strip_h)
+        cv2.rectangle(panel, (0, y), (width, height), (12, 15, 19), -1)
+        cv2.line(panel, (0, y), (width, y), (48, 57, 64), 1)
+
+        status_color = self._status_color()
+        cv2.circle(panel, (15, y + 11), 4, status_color, -1)
+        status_text = self._truncate(self.status, max(16, (width - 34) // 7))
+        self._put_text(panel, status_text, 25, y + 14, status_color, 0.29, 1)
+        self._put_text(
+            panel,
+            "r reinit camera    q/esc quit",
+            14,
+            y + 28,
+            (155, 165, 172),
+            0.28,
+            1,
+        )
+
+    def _draw_card(
+        self,
+        image: np.ndarray,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        color: tuple[int, int, int],
+    ) -> None:
+        self._draw_rounded_rect(image, x, y, width, height, color, 9)
+        cv2.rectangle(
+            image,
+            (x + 1, y + 1),
+            (x + width - 2, y + height - 2),
+            (54, 63, 70),
+            1,
+        )
 
     def _draw_probability_bars(
         self,
@@ -443,51 +719,175 @@ class DigitTactileDemoApp:
     ) -> int:
         row_count = len(self.class_names)
         row_height = max(7, height // row_count)
-        bar_height = max(3, row_height - 4)
-        label_width = min(118, width // 3)
-        percent_width = 36
-        bar_x = x + label_width
-        bar_width = max(24, width - label_width - percent_width - 6)
+        bar_height = max(3, min(8, row_height - 4))
+        label_width = min(92, max(62, width // 2))
+        bar_x = x + label_width + 4
+        bar_width = max(16, width - label_width - 4)
         winner_index = int(np.argmax(probabilities))
 
         for index, class_name in enumerate(self.class_names):
             probability = float(np.clip(probabilities[index], 0.0, 1.0))
             row_y = y + (index * row_height)
-            text_y = row_y + row_height - 2
-            color = accent_color if index == winner_index else (110, 110, 110)
+            text_y = row_y + row_height - 1
+            bar_y = row_y + max(2, (row_height - bar_height) // 2)
+            is_winner = index == winner_index
+            color = accent_color if is_winner else (84, 96, 104)
+            label_color = (242, 245, 247) if is_winner else (170, 179, 184)
+
+            if is_winner:
+                self._draw_rounded_rect(
+                    panel,
+                    x - 4,
+                    row_y,
+                    width + 2,
+                    row_height,
+                    (32, 40, 47),
+                    4,
+                )
 
             self._put_text(
                 panel,
-                self._truncate(class_name, 16),
+                self._truncate(
+                    self._display_label(class_name),
+                    max(6, label_width // 7),
+                ),
                 x,
                 text_y,
-                (225, 225, 225),
-                0.27,
+                label_color,
+                0.25,
             )
-            cv2.rectangle(
+            self._draw_rounded_rect(
                 panel,
-                (bar_x, row_y + 2),
-                (bar_x + bar_width, row_y + 2 + bar_height),
-                (55, 55, 55),
-                -1,
+                bar_x,
+                bar_y,
+                bar_width,
+                bar_height,
+                (47, 55, 62),
+                bar_height // 2,
             )
-            cv2.rectangle(
-                panel,
-                (bar_x, row_y + 2),
-                (bar_x + int(bar_width * probability), row_y + 2 + bar_height),
-                color,
-                -1,
-            )
-            self._put_text(
-                panel,
-                f"{probability:.0%}",
-                bar_x + bar_width + 5,
-                text_y,
-                (210, 210, 210),
-                0.27,
-            )
+            fill_width = int(bar_width * probability)
+            if fill_width > 0:
+                self._draw_rounded_rect(
+                    panel,
+                    bar_x,
+                    bar_y,
+                    max(bar_height, fill_width),
+                    bar_height,
+                    color,
+                    bar_height // 2,
+                )
+                if fill_width < bar_height:
+                    cv2.rectangle(
+                        panel,
+                        (bar_x + fill_width, bar_y),
+                        (bar_x + bar_height, bar_y + bar_height - 1),
+                        (47, 55, 62),
+                        -1,
+                    )
 
         return y + (row_count * row_height)
+
+    def _draw_confidence_pill(
+        self,
+        image: np.ndarray,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        text: str,
+        accent_color: tuple[int, int, int],
+    ) -> None:
+        self._draw_rounded_rect(image, x, y, width, height, (18, 23, 28), height // 2)
+        cv2.rectangle(
+            image,
+            (x + 1, y + 1),
+            (x + width - 2, y + height - 2),
+            accent_color,
+            1,
+        )
+        self._put_text_fit(
+            image,
+            text,
+            x + 9,
+            y + height - 8,
+            max(10, width - 18),
+            (245, 248, 250),
+            0.42,
+            0.28,
+            1,
+            cv2.FONT_HERSHEY_DUPLEX,
+        )
+
+    @staticmethod
+    def _draw_rounded_rect(
+        image: np.ndarray,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        color: tuple[int, int, int],
+        radius: int,
+    ) -> None:
+        if width <= 0 or height <= 0:
+            return
+
+        x2 = x + width - 1
+        y2 = y + height - 1
+        radius = max(0, min(radius, width // 2, height // 2))
+        if radius <= 1:
+            cv2.rectangle(image, (x, y), (x2, y2), color, -1)
+            return
+
+        cv2.rectangle(image, (x + radius, y), (x2 - radius, y2), color, -1)
+        cv2.rectangle(image, (x, y + radius), (x2, y2 - radius), color, -1)
+        cv2.circle(image, (x + radius, y + radius), radius, color, -1)
+        cv2.circle(image, (x2 - radius, y + radius), radius, color, -1)
+        cv2.circle(image, (x + radius, y2 - radius), radius, color, -1)
+        cv2.circle(image, (x2 - radius, y2 - radius), radius, color, -1)
+
+    @staticmethod
+    def _put_text_fit(
+        image: np.ndarray,
+        text: str,
+        x: int,
+        y: int,
+        max_width: int,
+        color: tuple[int, int, int],
+        scale: float,
+        min_scale: float,
+        thickness: int,
+        font: int,
+    ) -> None:
+        text_width = cv2.getTextSize(text, font, scale, thickness)[0][0]
+        if text_width > max_width:
+            scale = max(min_scale, scale * (max_width / max(1, text_width)))
+        cv2.putText(
+            image,
+            text,
+            (x, y),
+            font,
+            scale,
+            color,
+            thickness,
+            cv2.LINE_AA,
+        )
+
+    @staticmethod
+    def _display_label(label: str) -> str:
+        return str(label).replace("_", " ")
+
+    @staticmethod
+    def _class_accent(index: int) -> tuple[int, int, int]:
+        palette = (
+            (78, 203, 255),
+            (255, 174, 83),
+            (122, 224, 139),
+            (232, 156, 255),
+            (88, 206, 210),
+            (116, 159, 255),
+            (255, 144, 170),
+        )
+        return palette[index % len(palette)]
 
     def _prediction_label(self, prediction: Any, probabilities: np.ndarray) -> str:
         label = getattr(prediction, "label", None)
