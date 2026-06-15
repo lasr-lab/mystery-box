@@ -4,7 +4,7 @@
 
 This repository is for a DIGIT tactile sensor demo. The goal is to classify tactile interactions with a 3D-printed sensor against fabrics mounted on a 3D-printed board.
 
-The classification problem currently has 7 classes:
+The classification problem currently has 9 classes:
 - `nothing` (displayed as no contact during collection)
 - `cotton`
 - `wool`
@@ -12,6 +12,8 @@ The classification problem currently has 7 classes:
 - `synthetic_leather`
 - `teddy`
 - `flower_fabric`
+- `3dprint`
+- `finger`
 
 The data collection key mapping is:
 - `0`: `nothing` / no contact
@@ -21,6 +23,8 @@ The data collection key mapping is:
 - `4`: `synthetic_leather`
 - `5`: `teddy`
 - `6`: `flower_fabric`
+- `7`: `3dprint`
+- `8`: `finger`
 
 ## Default Environment
 

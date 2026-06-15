@@ -44,3 +44,9 @@ labels:
   "6":
     class_name: flower_fabric
     display_name: flower fabric
+  "7":
+    class_name: "3dprint"
+    display_name: 3D print
+  "8":
+    class_name: finger
+    display_name: finger

@@ -1,7 +1,7 @@
 name: digit_fabrics
 sensor: DIGIT
 dataset_dir: digit_fabrics
-num_classes: 7
+num_classes: 9
 seed: 42
 classes:
   - nothing
@@ -11,6 +11,8 @@ classes:
   - synthetic_leather
   - teddy
   - flower_fabric
+  - "3dprint"
+  - finger
 
 input:
   color_channels: 3
