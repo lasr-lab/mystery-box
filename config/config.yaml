@@ -19,3 +19,7 @@ paths:
   processed_data_dir: ${paths.data_dir}/processed
   external_data_dir: ${paths.data_dir}/external
   output_dir: ${hydra:runtime.output_dir}
+
+hydra:
+  run:
+    dir: outputs/${now:%m_%d}_${oc.select:model.name,model}_${oc.select:data.num_classes,numclasses}_${now:%H%M%S}

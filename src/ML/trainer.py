@@ -38,7 +38,7 @@ class Trainer:
         self.device = self._select_device(str(self.trainer_cfg.device))
         self.class_names = self._resolve_class_names()
         self.checkpoint_dir = Path(str(self.trainer_cfg.checkpoint_dir))
-        self.best_checkpoint_path = self.checkpoint_dir / "best.pt"
+        self.best_checkpoint_path = self.checkpoint_dir / str(self.trainer_cfg.checkpoint_filename)
         self.wandb_run = None
 
     @staticmethod
