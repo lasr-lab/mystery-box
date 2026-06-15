@@ -1,21 +1,39 @@
 # Demo Prototype
 
-Temporary OpenCV prototype for live DIGIT tactile classification. It uses
-`models/mobilevit_s.pt` by default.
+Temporary prototypes for live DIGIT tactile classification.
 
-Run from the repository root with the project Python/Hydra entry point:
+Use the project environment before running `python` commands:
+
+```bash
+source /home/max/miniforge3/bin/activate secai_demo_server
+```
+
+Run the OpenCV frontend from the repository root:
 
 ```bash
 /home/max/miniforge3/envs/secai_demo_server/bin/python -m src.demo.app demo=default model=mobilevit_s
 ```
 
-Controls:
+Run the NiceGUI frontend from the repository root:
+
+```bash
+/home/max/miniforge3/envs/secai_demo_server/bin/python -m src.demo.nicegui_app demo=default model=mobilevit_s
+```
+
+Then open `http://127.0.0.1:8080` in a browser.
+
+OpenCV controls:
 
 - `q` or `Esc`: quit
 - `r`: reinitialize the camera/sensor; this also resets the rolling prediction aggregate
 
-The left panel shows the current frame prediction with its softmax scores, plus
-the aggregate prediction over the last 60 frames.
+NiceGUI controls:
+
+- `r`: reinitialize the camera/sensor; this also resets the rolling prediction aggregate
+- The `Reinitialize camera` button performs the same reset as `r`
+
+Both frontends show the current frame prediction with its softmax scores, plus
+the aggregate prediction over the last configured rolling window.
 
 No-camera smoke check:
 

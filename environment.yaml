@@ -16,3 +16,5 @@ dependencies:
   - opencv
   - timm>=1.0
   - wandb>=0.16
+  - pip:
+    - nicegui>=2.14.0

@@ -1,6 +1,6 @@
 name: tactile_demo
-model_checkpoint: ${hydra:runtime.cwd}/models/efficientnet_b0.pt
-#model_checkpoint: ${hydra:runtime.cwd}/models/mobilevit_s.pt
+#model_checkpoint: ${hydra:runtime.cwd}/models/efficientnet_b0.pt
+model_checkpoint: ${hydra:runtime.cwd}/models/mobilevit_s.pt
 device: auto
 
 sensor:
