@@ -331,7 +331,6 @@ class Trainer:
             log_data["val/confusion_matrix"] = confusion_matrix
             if is_best:
                 log_data["best/confusion_matrix"] = confusion_matrix
-                self.wandb_run.summary["best/confusion_matrix"] = confusion_matrix
         self._wandb_log(log_data, step=step)
 
     def _wandb_log(self, metrics: dict[str, Any], step: Optional[int] = None) -> None:
