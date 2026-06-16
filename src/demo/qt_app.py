@@ -31,11 +31,15 @@ from PySide6.QtCore import (
     QMetaObject,
     Qt,
     QThread,
+    QRectF,
+    QSize,
     QTimer,
     Signal,
     Slot,
 )
-from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
+from PySide6.QtGui import QImage, QKeySequence, QPainter, QPixmap, QShortcut
+from PySide6.QtSvg import QSvgRenderer
+
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -108,6 +112,7 @@ UI_TEXT = {
             "Touch the fabrics hidden in the box. Then take the tactile sensor "
             "and see if the AI can classify the fabrics correctly."
         ),
+        "attribution": "powered by LASR Lab @ TU Dresden",
         "language": "Language:",
         "language_en": "English",
         "language_de": "Deutsch",
@@ -134,6 +139,7 @@ UI_TEXT = {
             "taktilen Sensor und pr\u00fcfe, ob die KI die Stoffe richtig "
             "klassifizieren kann."
         ),
+        "attribution": "powered by LASR Lab @ TU Dresden",
         "language": "Sprache:",
         "language_en": "Englisch",
         "language_de": "Deutsch",
@@ -178,6 +184,8 @@ CLASS_DISPLAY_NAMES = {
         "finger": "Finger",
     },
 }
+
+SECAI_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "secai-logo.svg"
 
 
 def _normalize_language(value: Any) -> str:
@@ -574,6 +582,68 @@ class DigitTactileQtWindow(QMainWindow):
         side_layout.setContentsMargins(18, 18, 18, 18)
         side_layout.setSpacing(12)
 
+        header_layout = QVBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(8)
+        brand_layout = QVBoxLayout()
+        brand_layout.setContentsMargins(0, 0, 0, 0)
+        brand_layout.setSpacing(2)
+        self.logo_label = QLabel(side_panel)
+        self.logo_label.setObjectName("secaiLogo")
+        self.logo_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        logo_rendered = False
+        if QSvgRenderer is not None and SECAI_LOGO_PATH.exists():
+            try:
+                renderer = QSvgRenderer(str(SECAI_LOGO_PATH))
+                if renderer.isValid():
+                    intrinsic_size = renderer.defaultSize()
+                    if (
+                        intrinsic_size.isValid()
+                        and intrinsic_size.width() > 0
+                        and intrinsic_size.height() > 0
+                    ):
+                        target_width = 220
+                        target_height = int(
+                            intrinsic_size.height()
+                            * (target_width / intrinsic_size.width())
+                        )
+                        target_size = QSize(target_width, max(1, target_height))
+                        device_pixel_ratio = max(1.0, self.devicePixelRatioF())
+                        pixmap_size = QSize(
+                            int(round(target_size.width() * device_pixel_ratio)),
+                            int(round(target_size.height() * device_pixel_ratio)),
+                        )
+                        logo_pixmap = QPixmap(pixmap_size)
+                        logo_pixmap.setDevicePixelRatio(device_pixel_ratio)
+                        logo_pixmap.fill(Qt.GlobalColor.transparent)
+                        painter = QPainter(logo_pixmap)
+                        painter.setRenderHints(
+                            QPainter.RenderHint.Antialiasing
+                            | QPainter.RenderHint.SmoothPixmapTransform
+                        )
+                        renderer.render(
+                            painter,
+                            QRectF(
+                                0,
+                                0,
+                                target_size.width(),
+                                target_size.height(),
+                            ),
+                        )
+                        painter.end()
+                        self.logo_label.setPixmap(logo_pixmap)
+                        logo_rendered = True
+            except Exception:
+                logo_rendered = False
+
+        if not logo_rendered:
+            self.logo_label.setText("SECAI")
+        self.logo_label.setMinimumHeight(48)
+        brand_layout.addWidget(self.logo_label)
+        header_layout.addLayout(brand_layout)
+
         language_layout = QHBoxLayout()
         language_layout.addStretch(1)
         self.language_label = QLabel(side_panel)
@@ -585,7 +655,8 @@ class DigitTactileQtWindow(QMainWindow):
         )
         language_layout.addWidget(self.language_label)
         language_layout.addWidget(self.language_combo)
-        side_layout.addLayout(language_layout)
+        header_layout.addLayout(language_layout)
+        side_layout.addLayout(header_layout)
 
         self.title_label = QLabel(side_panel)
         self.title_label.setObjectName("titleLabel")
@@ -643,6 +714,11 @@ class DigitTactileQtWindow(QMainWindow):
         self.aggregate_rows_layout.setSpacing(6)
         side_layout.addWidget(self.aggregate_rows_container)
         side_layout.addStretch(1)
+        self.attribution_label = QLabel(side_panel)
+        self.attribution_label.setObjectName("attributionLabel")
+        self.attribution_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.attribution_label.setWordWrap(True)
+        side_layout.addWidget(self.attribution_label)
 
         root_layout.addWidget(side_panel, stretch=1)
         self._apply_styles()
@@ -662,78 +738,105 @@ class DigitTactileQtWindow(QMainWindow):
         self.setStyleSheet(
             """
             QMainWindow {
-                background: #101820;
-                color: #f4efe6;
+                background: #edf7fa;
+                color: #17324f;
             }
             QFrame#videoPanel, QFrame#sidePanel {
-                background: #17242d;
-                border: 1px solid #2e4654;
+                background: #ffffff;
+                border: 1px solid #c9e7ef;
                 border-radius: 14px;
             }
             QLabel {
-                color: #f4efe6;
+                color: #17324f;
                 font-size: 14px;
             }
+            QLabel#secaiLogo {
+                color: #305886;
+                font-size: 30px;
+                font-weight: 800;
+            }
+            QLabel#brandInfoLabel {
+                color: #305886;
+                font-size: 12px;
+                font-weight: 700;
+                letter-spacing: 0.4px;
+            }
             QLabel#titleLabel {
-                color: #f8c765;
+                color: #305886;
                 font-size: 27px;
                 font-weight: 700;
                 letter-spacing: 0.5px;
             }
             QLabel#instructionsLabel {
-                color: #dce8ef;
+                color: #28465e;
                 font-size: 16px;
                 line-height: 1.35;
             }
             QLabel#languageLabel {
-                color: #9fb3bf;
+                color: #557086;
             }
             QLabel#sectionTitle {
                 font-size: 17px;
                 font-weight: 700;
+                color: #305886;
             }
             QLabel#shortcutLabel {
-                color: #9fb3bf;
+                color: #557086;
+            }
+            QLabel#attributionLabel {
+                color: #305886;
+                font-size: 12px;
+                font-weight: 700;
+                padding-top: 8px;
             }
             QLabel#videoLabel {
-                background: #070a0d;
+                background: #06111f;
                 border-radius: 10px;
-                color: #9fb3bf;
+                color: #c9e7ef;
             }
             QPushButton {
-                background: #f8c765;
-                color: #101820;
+                background: #305886;
+                color: #ffffff;
                 border: 0;
                 border-radius: 8px;
                 padding: 9px 14px;
                 font-weight: 700;
             }
             QPushButton:hover {
-                background: #ffd989;
+                background: #4eaec8;
+                color: #17324f;
             }
             QPushButton:pressed {
-                background: #dba84b;
+                background: #00008c;
             }
             QToolButton#detailsToggle {
-                background: #243642;
-                color: #f4efe6;
-                border: 1px solid #3a5969;
+                background: #e8f7f8;
+                color: #305886;
+                border: 1px solid #b7dfe8;
                 border-radius: 8px;
                 padding: 8px 10px;
                 font-weight: 700;
             }
             QToolButton#detailsToggle:hover {
-                background: #2b4350;
+                background: #d8f0f4;
             }
             QComboBox {
-                background: #243642;
-                color: #f4efe6;
-                border: 1px solid #3a5969;
+                background: #f7fbfc;
+                color: #305886;
+                border: 1px solid #b7dfe8;
                 border-radius: 8px;
+                outline: 0;
                 padding: 6px 12px;
                 min-width: 104px;
             }
+            QComboBox:hover, QComboBox:focus, QComboBox:on {
+                background: #f7fbfc;
+                color: #305886;
+                border: 1px solid #b7dfe8;
+                outline: 0;
+            }
             QComboBox::drop-down {
+                background: transparent;
                 border: 0;
                 width: 0px;
             }
@@ -743,24 +846,27 @@ class DigitTactileQtWindow(QMainWindow):
                 height: 0px;
             }
             QComboBox QAbstractItemView {
-                background: #17242d;
-                color: #f4efe6;
-                selection-background-color: #2e4654;
+                background: #ffffff;
+                color: #17324f;
+                selection-background-color: #d8f0f4;
+                selection-color: #17324f;
+                border: 1px solid #b7dfe8;
+                outline: 0;
             }
             QFrame#separator {
-                background: #2e4654;
+                background: #c9e7ef;
                 max-height: 1px;
                 border: 0;
             }
             QProgressBar {
-                background: #243642;
+                background: #e7f3f5;
                 border: 0;
                 border-radius: 5px;
                 height: 10px;
                 text-align: center;
             }
             QProgressBar::chunk {
-                background: #5ec0d4;
+                background: #00aaaf;
                 border-radius: 5px;
             }
             """
@@ -789,6 +895,7 @@ class DigitTactileQtWindow(QMainWindow):
 
         self.title_label.setText(self._tr("headline"))
         self.instructions_label.setText(self._tr("instructions"))
+        self.attribution_label.setText(self._tr("attribution"))
         self.language_label.setText(self._tr("language"))
         self.shortcuts_label.setText(self._tr("shortcuts"))
         self._refresh_language_combo()
@@ -1009,9 +1116,9 @@ class DigitTactileQtWindow(QMainWindow):
             row.bar.setValue(int(round(probability * 1000)))
             row.percent.setText(f"{probability:.0%}")
             row.label.setStyleSheet(
-                "font-weight: 700; color: #f8c765;"
+                "font-weight: 700; color: #305886;"
                 if index == winner_index and probability > 0.0
-                else "font-weight: 400; color: #f4efe6;"
+                else "font-weight: 400; color: #17324f;"
             )
 
     def _set_video_frame(self, frame_bgr: np.ndarray) -> None:
@@ -1048,11 +1155,11 @@ class DigitTactileQtWindow(QMainWindow):
             marker in status_lower
             for marker in ("failed", "unavailable", "could not")
         ):
-            self.status_label.setStyleSheet("color: #ffb36b;")
+            self.status_label.setStyleSheet("color: #b45309;")
         elif status.startswith("Camera"):
-            self.status_label.setStyleSheet("color: #90d585;")
+            self.status_label.setStyleSheet("color: #33b887;")
         else:
-            self.status_label.setStyleSheet("color: #d2dde4;")
+            self.status_label.setStyleSheet("color: #305886;")
 
     def _label_for_probabilities(self, probabilities: np.ndarray) -> str:
         return self.class_names[int(np.argmax(probabilities))]
