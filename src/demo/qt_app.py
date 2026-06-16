@@ -173,7 +173,7 @@ UI_TEXT = {
         "loading": "loading",
         "status_initial": "Starting demo.",
         "current": "Current",
-        "aggregate": "Aggregate",
+        "prediction": "Prediction",
         "unavailable": "unavailable",
         "sensor_preview_disabled": "Sensor preview disabled",
         "reinitializing_camera": "Reinitializing camera",
@@ -201,7 +201,7 @@ UI_TEXT = {
         "loading": "l\u00e4dt",
         "status_initial": "Demo startet.",
         "current": "Aktuell",
-        "aggregate": "Aggregiert",
+        "prediction": "Vorhersage",
         "unavailable": "nicht verf\u00fcgbar",
         "sensor_preview_disabled": "Sensorvorschau deaktiviert",
         "reinitializing_camera": "Kamera startet neu",
@@ -981,7 +981,7 @@ class DigitTactileQtWindow(QMainWindow):
                 f"{self._tr('current')}: {self._tr('unavailable')}"
             )
             self.aggregate_title.setText(
-                f"{self._tr('aggregate')}: {self._tr('unavailable')}"
+                f"{self._tr('prediction')}: {self._tr('unavailable')}"
             )
             return
 
@@ -1004,13 +1004,13 @@ class DigitTactileQtWindow(QMainWindow):
             aggregate_label = self._label_for_probabilities(aggregate_probabilities)
             aggregate_confidence = float(np.max(aggregate_probabilities))
             self.aggregate_title.setText(
-                f"{self._tr('aggregate')}: "
+                f"{self._tr('prediction')}: "
                 f"{self._display_class_name(aggregate_label)} "
                 f"({aggregate_confidence:.0%})"
             )
         else:
             self.aggregate_title.setText(
-                f"{self._tr('aggregate')}: {self._tr('unavailable')}"
+                f"{self._tr('prediction')}: {self._tr('unavailable')}"
             )
 
     @Slot(bool)
