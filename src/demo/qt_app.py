@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import glob
 import re
-import traceback
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,36 +19,30 @@ from omegaconf import DictConfig, OmegaConf
 # make Torch's later ``typing.Self`` annotations fail during torchvision import.
 from src.demo.inference import DemoClassifier
 
-try:
-    from PySide6.QtCore import (
-        QObject,
-        QMetaObject,
-        Qt,
-        QThread,
-        QTimer,
-        Signal,
-        Slot,
-    )
-    from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
-    from PySide6.QtWidgets import (
-        QApplication,
-        QComboBox,
-        QFrame,
-        QHBoxLayout,
-        QLabel,
-        QMainWindow,
-        QPushButton,
-        QProgressBar,
-        QSizePolicy,
-        QToolButton,
-        QVBoxLayout,
-        QWidget,
-    )
-except ImportError as exc:  # pragma: no cover - exercised only in missing GUI envs.
-    raise RuntimeError(
-        "PySide6 is required for the Qt demo. Install the project dependencies "
-        "before running `python -m src.demo.qt_app demo=default model=mobilevit_s`."
-    ) from exc
+from PySide6.QtCore import (
+    QObject,
+    QMetaObject,
+    Qt,
+    QThread,
+    QTimer,
+    Signal,
+    Slot,
+)
+from PySide6.QtGui import QImage, QKeySequence, QPixmap, QShortcut
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QProgressBar,
+    QSizePolicy,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 @dataclass(frozen=True)
@@ -125,10 +118,6 @@ UI_TEXT = {
         "unavailable": "unavailable",
         "sensor_preview_disabled": "Sensor preview disabled",
         "reinitializing_camera": "Reinitializing camera",
-        "frame_unavailable": "Frame unavailable",
-        "frame_unavailable_hint": (
-            "Frame unavailable - press r or Reinitialize camera"
-        ),
     },
     "de": {
         "window_title": "Kannst du die KI schlagen?",
@@ -155,10 +144,6 @@ UI_TEXT = {
         "unavailable": "nicht verf\u00fcgbar",
         "sensor_preview_disabled": "Sensorvorschau deaktiviert",
         "reinitializing_camera": "Kamera startet neu",
-        "frame_unavailable": "Bild nicht verf\u00fcgbar",
-        "frame_unavailable_hint": (
-            "Bild nicht verf\u00fcgbar - r dr\u00fccken oder Kamera neu starten"
-        ),
     },
 }
 
@@ -189,11 +174,14 @@ CLASS_DISPLAY_NAMES = {
 
 
 def _normalize_language(value: Any) -> str:
-    return LANGUAGE_ALIASES.get(str(value).strip().lower(), "en")
+    normalized = LANGUAGE_ALIASES[str(value).strip().lower()]
+    if normalized not in UI_TEXT:
+        raise ValueError(f"Unsupported UI language: {value!r}")
+    return normalized
 
 
 def _text(language: str, key: str) -> str:
-    return UI_TEXT.get(language, UI_TEXT["en"]).get(key, UI_TEXT["en"][key])
+    return UI_TEXT[language][key]
 
 
 class CaptureInferenceWorker(QObject):
@@ -202,21 +190,18 @@ class CaptureInferenceWorker(QObject):
     classifier_ready = Signal(object)
     frame_ready = Signal(object)
     status_changed = Signal(object)
-    fatal_error = Signal(str)
 
     def __init__(
         self,
         demo_cfg: dict[str, Any],
         model_cfg: dict[str, Any],
         data_cfg: dict[str, Any],
-        classifier_cls: Any,
         language: str,
     ) -> None:
         super().__init__()
         self.demo_cfg = demo_cfg
         self.model_cfg = model_cfg
         self.data_cfg = data_cfg
-        self.classifier_cls = classifier_cls
         self.language = _normalize_language(language)
         self.sensor_cfg = demo_cfg["sensor"]
         self.aggregate_window_frames = max(
@@ -228,7 +213,6 @@ class CaptureInferenceWorker(QObject):
         self.class_names: list[str] = []
         self.camera: Optional[Any] = None
         self.camera_source: Optional[str] = None
-        self.last_frame: Optional[np.ndarray] = None
         self.probability_window: deque[np.ndarray] = deque(
             maxlen=self.aggregate_window_frames
         )
@@ -240,20 +224,15 @@ class CaptureInferenceWorker(QObject):
     def start(self) -> None:
         """Load the model, open the camera, and start periodic capture."""
 
-        try:
-            self.classifier = self.classifier_cls(
-                str(self.demo_cfg["model_checkpoint"]),
-                self.model_cfg,
-                self.data_cfg,
-                device=str(self.demo_cfg.get("device", "auto")),
-            )
-            self.class_names = [str(name) for name in self.classifier.class_names]
-            if not self.class_names:
-                raise RuntimeError("Demo classifier did not provide any class names.")
-        except Exception as exc:
-            traceback.print_exc()
-            self.fatal_error.emit(f"Classifier load failed: {exc}")
-            return
+        self.classifier = DemoClassifier(
+            str(self.demo_cfg["model_checkpoint"]),
+            self.model_cfg,
+            self.data_cfg,
+            device=str(self.demo_cfg.get("device", "auto")),
+        )
+        self.class_names = [str(name) for name in self.classifier.class_names]
+        if not self.class_names:
+            raise RuntimeError("Demo classifier did not provide any class names.")
 
         self.classifier_ready.emit(
             ClassifierInfo(
@@ -266,7 +245,9 @@ class CaptureInferenceWorker(QObject):
         self.timer = QTimer(self)
         self.timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.timer.timeout.connect(self.update_frame)
-        self.timer.start(self._timer_interval_ms())
+        sensor_fps = max(1, int(self.sensor_cfg.get("fps", 30)))
+        ui_fps = min(sensor_fps, 15)
+        self.timer.start(max(1, int(round(1000.0 / ui_fps))))
 
     @Slot()
     def stop(self) -> None:
@@ -301,14 +282,86 @@ class CaptureInferenceWorker(QObject):
             )
         )
 
-        try:
-            status = self._open_camera()
-        except (AttributeError, OSError, RuntimeError, cv2.error) as exc:
-            self._release_camera()
-            status = f"Camera reinit failed: {exc}"
+        device_path = self.sensor_cfg.get("device_path")
+        if device_path:
+            source = str(device_path)
+        else:
+            device_name = str(self.sensor_cfg["device_name"])
+            matches: list[tuple[int, str]] = []
+            for name_file in sorted(glob.glob("/sys/class/video4linux/video*/name")):
+                name_path = Path(name_file)
+                actual_name = name_path.read_text(encoding="utf-8").strip()
+                if device_name.lower() not in actual_name.lower():
+                    continue
+                index = int(
+                    (name_path.parent / "index").read_text(encoding="utf-8").strip()
+                )
+                matches.append((index, f"/dev/{name_path.parent.name}"))
+            if not matches:
+                raise RuntimeError(
+                    f"No video device matching {device_name!r}. "
+                    "Set demo.sensor.device_path=/dev/videoX."
+                )
+            source = sorted(matches)[0][1]
 
-        self.status = status
-        self.status_changed.emit(self._runtime_status())
+        backend_name = str(self.sensor_cfg.get("backend", "CAP_V4L2"))
+        backend = getattr(cv2, backend_name)
+        capture_source: Any = source
+        if backend == cv2.CAP_V4L2:
+            video_device = re.fullmatch(r"/dev/video(\d+)", source)
+            if video_device is not None:
+                capture_source = int(video_device.group(1))
+            elif source.isdecimal():
+                capture_source = int(source)
+
+        camera = cv2.VideoCapture(capture_source, backend)
+        fourcc = cv2.VideoWriter_fourcc(*str(self.sensor_cfg["fourcc"])[:4])
+        camera.set(cv2.CAP_PROP_FOURCC, fourcc)
+        camera.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.sensor_cfg["width"]))
+        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self.sensor_cfg["height"]))
+        camera.set(cv2.CAP_PROP_FPS, int(self.sensor_cfg["fps"]))
+
+        if not camera.isOpened():
+            camera.release()
+            raise RuntimeError(f"Could not open DIGIT camera source {source}.")
+
+        warmup_frames = int(self.sensor_cfg["warmup_frames"])
+        read_success = warmup_frames <= 0
+        for _ in range(warmup_frames):
+            ok, _ = camera.read()
+            read_success = read_success or ok
+        if not read_success:
+            camera.release()
+            raise RuntimeError(
+                f"Could not read warmup frames from DIGIT camera source {source}."
+            )
+
+        self.camera = camera
+        self.camera_source = source
+        self.probability_window.clear()
+        fourcc_value = int(camera.get(cv2.CAP_PROP_FOURCC))
+        fourcc_text = (
+            "unknown"
+            if fourcc_value <= 0
+            else "".join(
+                chr((fourcc_value >> (8 * index)) & 0xFF) for index in range(4)
+            ).strip()
+        )
+        self.status = (
+            f"Camera {source}: "
+            f"{int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
+            f"{int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))}, "
+            f"{camera.get(cv2.CAP_PROP_FPS):.1f} fps, "
+            f"{fourcc_text}"
+        )
+        print(self.status)
+        self.status_changed.emit(
+            RuntimeStatus(
+                status=self.status,
+                camera_source=self.camera_source,
+                device=str(self.classifier.device),
+            )
+        )
 
     @Slot()
     def update_frame(self) -> None:
@@ -317,38 +370,34 @@ class CaptureInferenceWorker(QObject):
         if self.classifier is None or self.stopping:
             return
 
-        frame = self._read_frame()
-        if frame is None:
-            self._release_camera()
-            self.status = "Frame read failed. Press r or Reinitialize camera."
-            self.probability_window.clear()
-            self.frame_ready.emit(
-                self._frame_result(
-                    frame_bgr=self._error_frame(),
-                    prediction_label=None,
-                    probabilities=None,
-                )
-            )
-            return
+        if self.camera is None:
+            raise RuntimeError("DIGIT camera is not initialized.")
 
-        try:
-            self._require_expected_size(frame)
-            self.last_frame = frame.copy()
-            prediction = self.classifier.predict(frame)
-            probabilities = self._prediction_probabilities(prediction)
-            prediction_label = self._prediction_label(prediction, probabilities)
-            self.probability_window.append(probabilities)
-        except Exception as exc:
-            self.status = f"Inference failed: {exc}"
-            self.probability_window.clear()
-            self.frame_ready.emit(
-                self._frame_result(
-                    frame_bgr=self._error_frame(),
-                    prediction_label=None,
-                    probabilities=None,
-                )
+        ok, frame = self.camera.read()
+        if not ok or frame is None:
+            raise RuntimeError("Could not read a frame from the DIGIT camera.")
+
+        expected_width = int(self.sensor_cfg["width"])
+        expected_height = int(self.sensor_cfg["height"])
+        height, width = frame.shape[:2]
+        if (width, height) != (expected_width, expected_height):
+            raise RuntimeError(
+                f"Expected {expected_width}x{expected_height} from DIGIT, "
+                f"got {width}x{height}."
             )
-            return
+
+        prediction = self.classifier.predict(frame)
+        probabilities = np.asarray(
+            prediction.probabilities,
+            dtype=np.float32,
+        ).reshape(-1)
+        if probabilities.shape[0] != len(self.class_names):
+            raise RuntimeError(
+                "Prediction probability count does not match class count: "
+                f"{probabilities.shape[0]} != {len(self.class_names)}."
+            )
+        prediction_label = str(prediction.label)
+        self.probability_window.append(probabilities)
 
         display_frame = (
             frame
@@ -372,6 +421,11 @@ class CaptureInferenceWorker(QObject):
         prediction_label: Optional[str],
         probabilities: Optional[np.ndarray],
     ) -> FrameResult:
+        aggregate_probabilities = (
+            np.mean(np.stack(tuple(self.probability_window), axis=0), axis=0)
+            if self.probability_window
+            else np.zeros(len(self.class_names), dtype=np.float32)
+        )
         return FrameResult(
             frame_bgr=frame_bgr,
             status=self.status,
@@ -379,130 +433,9 @@ class CaptureInferenceWorker(QObject):
             device=str(self.classifier.device) if self.classifier is not None else None,
             prediction_label=prediction_label,
             probabilities=probabilities,
-            aggregate_probabilities=self._aggregate_probabilities(),
+            aggregate_probabilities=aggregate_probabilities,
             aggregate_count=len(self.probability_window),
         )
-
-    def _runtime_status(self) -> RuntimeStatus:
-        return RuntimeStatus(
-            status=self.status,
-            camera_source=self.camera_source,
-            device=str(self.classifier.device) if self.classifier is not None else None,
-        )
-
-    def _open_camera(self) -> str:
-        self._release_camera()
-
-        source = self._camera_source()
-        backend_name = str(self.sensor_cfg.get("backend", "CAP_V4L2"))
-        backend = getattr(cv2, backend_name)
-        capture_source = self._opencv_capture_source(source, backend)
-        camera = cv2.VideoCapture(capture_source, backend)
-
-        try:
-            fourcc = cv2.VideoWriter_fourcc(*str(self.sensor_cfg["fourcc"])[:4])
-            camera.set(cv2.CAP_PROP_FOURCC, fourcc)
-            camera.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.sensor_cfg["width"]))
-            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self.sensor_cfg["height"]))
-            camera.set(cv2.CAP_PROP_FPS, int(self.sensor_cfg["fps"]))
-
-            if not camera.isOpened():
-                raise RuntimeError(f"Could not open DIGIT camera source {source}.")
-
-            self._warm_camera(camera, source)
-        except Exception:
-            camera.release()
-            self.camera_source = None
-            raise
-
-        self.camera = camera
-        self.camera_source = source
-        self.probability_window.clear()
-        status = (
-            f"Camera {source}: "
-            f"{int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
-            f"{int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))}, "
-            f"{camera.get(cv2.CAP_PROP_FPS):.1f} fps, "
-            f"{self._fourcc_to_string(int(camera.get(cv2.CAP_PROP_FOURCC)))}"
-        )
-        print(status)
-        return status
-
-    def _warm_camera(self, camera: Any, source: str) -> None:
-        warmup_frames = int(self.sensor_cfg["warmup_frames"])
-        if warmup_frames <= 0:
-            return
-
-        read_success = False
-        for _ in range(warmup_frames):
-            ok, _ = camera.read()
-            read_success = read_success or ok
-
-        if not read_success:
-            raise RuntimeError(
-                f"Could not read warmup frames from DIGIT camera source {source}."
-            )
-
-    def _camera_source(self) -> str:
-        device_path = self.sensor_cfg.get("device_path")
-        if device_path:
-            return str(device_path)
-
-        device_name = str(self.sensor_cfg["device_name"])
-        source = self._find_video_device(device_name)
-        if source is None:
-            raise RuntimeError(
-                f"No video device matching {device_name!r}. "
-                "Set demo.sensor.device_path=/dev/videoX."
-            )
-        return source
-
-    @staticmethod
-    def _find_video_device(device_name: str) -> Optional[str]:
-        matches: list[tuple[int, str]] = []
-        for name_file in sorted(glob.glob("/sys/class/video4linux/video*/name")):
-            name_path = Path(name_file)
-            try:
-                actual_name = name_path.read_text(encoding="utf-8").strip()
-            except OSError:
-                continue
-            if device_name.lower() not in actual_name.lower():
-                continue
-            matches.append(
-                (
-                    CaptureInferenceWorker._device_index(name_path.parent),
-                    f"/dev/{name_path.parent.name}",
-                )
-            )
-
-        return sorted(matches)[0][1] if matches else None
-
-    @staticmethod
-    def _opencv_capture_source(source: str, backend: int) -> Any:
-        if backend != cv2.CAP_V4L2:
-            return source
-
-        video_device = re.fullmatch(r"/dev/video(\d+)", source)
-        if video_device is not None:
-            return int(video_device.group(1))
-
-        if source.isdecimal():
-            return int(source)
-
-        return source
-
-    @staticmethod
-    def _device_index(video_dir: Path) -> int:
-        try:
-            return int((video_dir / "index").read_text(encoding="utf-8").strip())
-        except (OSError, ValueError):
-            return 999
-
-    @staticmethod
-    def _fourcc_to_string(value: int) -> str:
-        if value <= 0:
-            return "unknown"
-        return "".join(chr((value >> (8 * index)) & 0xFF) for index in range(4)).strip()
 
     def _release_camera(self) -> None:
         camera = self.camera
@@ -510,49 +443,6 @@ class CaptureInferenceWorker(QObject):
         self.camera_source = None
         if camera is not None:
             camera.release()
-
-    def _read_frame(self) -> Optional[np.ndarray]:
-        if self.camera is None:
-            return None
-
-        try:
-            ok, frame = self.camera.read()
-        except cv2.error:
-            return None
-
-        if not ok or frame is None:
-            return None
-        return frame
-
-    def _prediction_probabilities(self, prediction: Any) -> np.ndarray:
-        probabilities = prediction.probabilities
-        if isinstance(probabilities, dict):
-            probabilities = [probabilities[name] for name in self.class_names]
-        if hasattr(probabilities, "detach"):
-            probabilities = probabilities.detach().cpu().numpy()
-
-        values = np.asarray(probabilities, dtype=np.float32).reshape(-1)
-        if values.shape[0] != len(self.class_names):
-            raise RuntimeError(
-                "Prediction probability count does not match class count: "
-                f"{values.shape[0]} != {len(self.class_names)}."
-            )
-        return values
-
-    def _aggregate_probabilities(self) -> np.ndarray:
-        if not self.probability_window:
-            return np.zeros(len(self.class_names), dtype=np.float32)
-        return np.mean(np.stack(tuple(self.probability_window), axis=0), axis=0)
-
-    def _require_expected_size(self, frame: Any) -> None:
-        expected_width = int(self.sensor_cfg["width"])
-        expected_height = int(self.sensor_cfg["height"])
-        height, width = frame.shape[:2]
-        if (width, height) != (expected_width, expected_height):
-            raise RuntimeError(
-                f"Expected {expected_width}x{expected_height} from DIGIT, "
-                f"got {width}x{height}."
-            )
 
     def _placeholder_frame(self, message: str) -> np.ndarray:
         width = int(self.sensor_cfg["width"])
@@ -570,39 +460,6 @@ class CaptureInferenceWorker(QObject):
         )
         return frame
 
-    def _error_frame(self) -> np.ndarray:
-        frame = (
-            self.last_frame.copy()
-            if self.last_frame is not None
-            else self._placeholder_frame(_text(self.language, "frame_unavailable"))
-        )
-        cv2.rectangle(frame, (0, 0), (frame.shape[1], 34), (0, 0, 0), -1)
-        cv2.putText(
-            frame,
-            _text(self.language, "frame_unavailable_hint"),
-            (10, 23),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
-            (80, 190, 255),
-            1,
-            cv2.LINE_AA,
-        )
-        return frame
-
-    def _prediction_label(self, prediction: Any, probabilities: np.ndarray) -> str:
-        label = getattr(prediction, "label", None)
-        if label:
-            return str(label)
-        return self._label_for_probabilities(probabilities)
-
-    def _label_for_probabilities(self, probabilities: np.ndarray) -> str:
-        return self.class_names[int(np.argmax(probabilities))]
-
-    def _timer_interval_ms(self) -> int:
-        sensor_fps = max(1, int(self.sensor_cfg.get("fps", 30)))
-        ui_fps = min(sensor_fps, 15)
-        return max(1, int(round(1000.0 / ui_fps)))
-
 
 class DigitTactileQtWindow(QMainWindow):
     """Qt main window that only renders worker results."""
@@ -615,15 +472,11 @@ class DigitTactileQtWindow(QMainWindow):
         demo_cfg: dict[str, Any],
         model_cfg: dict[str, Any],
         data_cfg: dict[str, Any],
-        classifier_cls: Any,
     ) -> None:
         super().__init__()
-        self.demo_cfg = demo_cfg
-        self.classifier_cls = classifier_cls
-        self.language = self._initial_language()
-        configured_window_name = str(
-            demo_cfg.get("gui", {}).get("window_name", "")
-        ).strip()
+        gui_cfg = demo_cfg["gui"]
+        self.language = _normalize_language(gui_cfg.get("language", "en"))
+        configured_window_name = str(gui_cfg.get("window_name", "")).strip()
         self._custom_window_name = configured_window_name
         self._use_translated_window_title = (
             not configured_window_name
@@ -643,14 +496,34 @@ class DigitTactileQtWindow(QMainWindow):
         self._last_current_probabilities: Optional[np.ndarray] = None
         self._last_aggregate_probabilities: Optional[np.ndarray] = None
         self._last_aggregate_count = 0
-        self._fatal_error_seen = False
         self._reinitialize_pending = True
         self._worker_stopping = False
 
         self.resize(1120, 700)
         self._build_ui()
-        self._setup_worker(demo_cfg, model_cfg, data_cfg)
-        self._setup_shortcuts()
+
+        self.worker_thread = QThread(self)
+        self.worker = CaptureInferenceWorker(
+            demo_cfg,
+            model_cfg,
+            data_cfg,
+            self.language,
+        )
+        self.worker.moveToThread(self.worker_thread)
+
+        self.worker_thread.started.connect(self.worker.start)
+        self.worker.classifier_ready.connect(self._handle_classifier_ready)
+        self.worker.frame_ready.connect(self._handle_frame_result)
+        self.worker.status_changed.connect(self._handle_status)
+        self.reinitialize_requested.connect(self.worker.reinitialize_camera)
+        self.language_changed.connect(self.worker.set_language)
+        self.worker_thread.finished.connect(self.worker.deleteLater)
+        self.worker_thread.start()
+
+        QShortcut(QKeySequence("R"), self, activated=self._request_reinitialize)
+        QShortcut(QKeySequence("Q"), self, activated=self.close)
+        QShortcut(QKeySequence("Esc"), self, activated=self.close)
+        QShortcut(QKeySequence.StandardKey.Quit, self, activated=self.close)
 
     def _build_ui(self) -> None:
         root = QWidget(self)
@@ -886,12 +759,6 @@ class DigitTactileQtWindow(QMainWindow):
             """
         )
 
-    def _initial_language(self) -> str:
-        gui_cfg = self.demo_cfg.get("gui", {})
-        if not isinstance(gui_cfg, dict):
-            return "en"
-        return _normalize_language(gui_cfg.get("language", "en"))
-
     def _tr(self, key: str) -> str:
         return _text(self.language, key)
 
@@ -910,9 +777,7 @@ class DigitTactileQtWindow(QMainWindow):
         else:
             self.setWindowTitle(self._custom_window_name)
 
-        if self._fatal_error_seen:
-            self.video_label.setText(self._display_status(self._last_status))
-        elif self.last_pixmap is None:
+        if self.last_pixmap is None:
             self.video_label.setText(self._tr("starting_camera"))
 
         self.title_label.setText(self._tr("headline"))
@@ -923,7 +788,15 @@ class DigitTactileQtWindow(QMainWindow):
         self._set_details_visible(self.details_toggle.isChecked())
         self._set_reinitialize_pending(self._reinitialize_pending)
         self._refresh_runtime_labels()
-        self._refresh_probability_row_labels()
+        for index, class_name in enumerate(self.class_names):
+            if index < len(self.current_rows):
+                self.current_rows[index].label.setText(
+                    self._display_class_name(class_name)
+                )
+            if index < len(self.aggregate_rows):
+                self.aggregate_rows[index].label.setText(
+                    self._display_class_name(class_name)
+                )
         self._refresh_prediction_titles()
 
     def _refresh_runtime_labels(self) -> None:
@@ -976,17 +849,6 @@ class DigitTactileQtWindow(QMainWindow):
                 f"0/{self.aggregate_window_frames}: {self._tr('unavailable')}"
             )
 
-    def _refresh_probability_row_labels(self) -> None:
-        for index, class_name in enumerate(self.class_names):
-            if index < len(self.current_rows):
-                self.current_rows[index].label.setText(
-                    self._display_class_name(class_name)
-                )
-            if index < len(self.aggregate_rows):
-                self.aggregate_rows[index].label.setText(
-                    self._display_class_name(class_name)
-                )
-
     @Slot(bool)
     def _set_details_visible(self, visible: bool) -> None:
         self.details_content.setVisible(visible)
@@ -1009,14 +871,7 @@ class DigitTactileQtWindow(QMainWindow):
         self.language_changed.emit(language)
 
     def _display_class_name(self, class_name: str) -> str:
-        display_names = CLASS_DISPLAY_NAMES.get(
-            self.language,
-            CLASS_DISPLAY_NAMES["en"],
-        )
-        if class_name in display_names:
-            return display_names[class_name]
-        humanized = class_name.replace("_", " ")
-        return humanized[:1].upper() + humanized[1:]
+        return CLASS_DISPLAY_NAMES[self.language][class_name]
 
     def _display_status(self, status: str) -> str:
         if self.language == "en":
@@ -1026,63 +881,13 @@ class DigitTactileQtWindow(QMainWindow):
             return self._tr("status_initial")
         if status == "Reinitializing camera...":
             return self._tr("reinitializing")
-        if status.startswith("Camera reinit failed:"):
-            return f"Kamera-Neustart fehlgeschlagen:{status.split(':', 1)[1]}"
-        if status.startswith("Frame read failed."):
-            return (
-                "Bild konnte nicht gelesen werden. Dr\u00fccke r oder starte die "
-                "Kamera neu."
-            )
-        if status.startswith("Inference failed:"):
-            return f"Inferenz fehlgeschlagen:{status.split(':', 1)[1]}"
-        if status.startswith("Classifier load failed:"):
-            return (
-                "Klassifikator konnte nicht geladen werden:"
-                f"{status.split(':', 1)[1]}"
-            )
         if status.startswith("Camera "):
             return f"Kamera {status[len('Camera '):]}"
         return status
 
-    def _setup_worker(
-        self,
-        demo_cfg: dict[str, Any],
-        model_cfg: dict[str, Any],
-        data_cfg: dict[str, Any],
-    ) -> None:
-        self.worker_thread = QThread(self)
-        self.worker = CaptureInferenceWorker(
-            demo_cfg,
-            model_cfg,
-            data_cfg,
-            self.classifier_cls,
-            self.language,
-        )
-        self.worker.moveToThread(self.worker_thread)
-
-        self.worker_thread.started.connect(self.worker.start)
-        self.worker.classifier_ready.connect(self._handle_classifier_ready)
-        self.worker.frame_ready.connect(self._handle_frame_result)
-        self.worker.status_changed.connect(self._handle_status)
-        self.worker.fatal_error.connect(self._handle_fatal_error)
-        self.reinitialize_requested.connect(self.worker.reinitialize_camera)
-        self.language_changed.connect(self.worker.set_language)
-        self.worker_thread.finished.connect(self.worker.deleteLater)
-        self.worker_thread.start()
-
-    def _setup_shortcuts(self) -> None:
-        QShortcut(QKeySequence("R"), self, activated=self._request_reinitialize)
-        QShortcut(QKeySequence("Q"), self, activated=self.close)
-        QShortcut(QKeySequence("Esc"), self, activated=self.close)
-        QShortcut(QKeySequence.StandardKey.Quit, self, activated=self.close)
-
     @Slot()
     def _request_reinitialize(self) -> None:
-        if (
-            self._reinitialize_pending
-            or self._worker_stopping
-            or self._fatal_error_seen
-        ):
+        if self._reinitialize_pending or self._worker_stopping:
             return
 
         self._set_reinitialize_pending(True)
@@ -1096,9 +901,7 @@ class DigitTactileQtWindow(QMainWindow):
             return
 
         self.reinitialize_button.setText(self._tr("reinitialize"))
-        self.reinitialize_button.setEnabled(
-            not self._worker_stopping and not self._fatal_error_seen
-        )
+        self.reinitialize_button.setEnabled(not self._worker_stopping)
 
     @Slot(object)
     def _handle_classifier_ready(self, info: ClassifierInfo) -> None:
@@ -1127,15 +930,6 @@ class DigitTactileQtWindow(QMainWindow):
         self._refresh_runtime_labels()
         self._set_status_style(result.status)
         self._update_predictions(result)
-
-    @Slot(str)
-    def _handle_fatal_error(self, message: str) -> None:
-        self._fatal_error_seen = True
-        self._set_reinitialize_pending(False)
-        self._last_status = message
-        self._refresh_runtime_labels()
-        self._set_status_style(message)
-        self.video_label.setText(self._display_status(message))
 
     def _rebuild_probability_rows(self) -> None:
         self._clear_layout(self.current_rows_layout)
@@ -1216,33 +1010,19 @@ class DigitTactileQtWindow(QMainWindow):
     def _set_video_frame(self, frame_bgr: np.ndarray) -> None:
         frame = np.asarray(frame_bgr)
         if frame.ndim != 3 or frame.shape[2] != 3:
-            self.video_label.setText(f"Invalid frame shape: {frame.shape}")
-            return
+            raise ValueError(f"Invalid frame shape: {frame.shape}")
 
-        image_format = self._qimage_format("Format_BGR888")
-        if image_format is None:
-            frame = np.ascontiguousarray(frame[:, :, ::-1])
-            image_format = self._qimage_format("Format_RGB888")
-        else:
-            frame = np.ascontiguousarray(frame)
-
+        frame = np.ascontiguousarray(frame)
         height, width, _ = frame.shape
         image = QImage(
             frame.data,
             width,
             height,
             int(frame.strides[0]),
-            image_format,
+            QImage.Format.Format_BGR888,
         ).copy()
         self.last_pixmap = QPixmap.fromImage(image)
         self._resize_video_pixmap()
-
-    @staticmethod
-    def _qimage_format(name: str) -> Optional[Any]:
-        direct_format = getattr(QImage, name, None)
-        if direct_format is not None:
-            return direct_format
-        return getattr(QImage.Format, name, None)
 
     def _resize_video_pixmap(self) -> None:
         if self.last_pixmap is None:
@@ -1279,12 +1059,9 @@ class DigitTactileQtWindow(QMainWindow):
         super().closeEvent(event)
 
     def _stop_worker(self) -> None:
-        if not hasattr(self, "worker_thread"):
-            return
         if self.worker_thread.isRunning():
             self._worker_stopping = True
-            if hasattr(self, "reinitialize_button"):
-                self.reinitialize_button.setEnabled(False)
+            self.reinitialize_button.setEnabled(False)
             QMetaObject.invokeMethod(
                 self.worker,
                 "stop",
@@ -1303,37 +1080,6 @@ class DigitTactileQtWindow(QMainWindow):
                 widget.deleteLater()
 
 
-class DigitTactileQtApp:
-    """Small wrapper matching the existing demo entry point shape."""
-
-    def __init__(
-        self,
-        demo_cfg: dict[str, Any],
-        model_cfg: dict[str, Any],
-        data_cfg: dict[str, Any],
-    ) -> None:
-        self.demo_cfg = demo_cfg
-        self.model_cfg = model_cfg
-        self.data_cfg = data_cfg
-
-    def run(self) -> None:
-        classifier_cls = self._load_classifier_class()
-        application = QApplication.instance() or QApplication([])
-        window = DigitTactileQtWindow(
-            demo_cfg=self.demo_cfg,
-            model_cfg=self.model_cfg,
-            data_cfg=self.data_cfg,
-            classifier_cls=classifier_cls,
-        )
-        window.show()
-        raise SystemExit(application.exec())
-
-    @staticmethod
-    def _load_classifier_class() -> Any:
-        """Return the preloaded classifier class for the worker thread."""
-        return DemoClassifier
-
-
 def _config_section(cfg: DictConfig, name: str) -> dict[str, Any]:
     section = cfg.get(name)
     if section is None:
@@ -1349,12 +1095,14 @@ def _config_section(cfg: DictConfig, name: str) -> dict[str, Any]:
 
 @hydra.main(version_base=None, config_path="../../config", config_name="config")
 def main(cfg: DictConfig) -> None:
-    app = DigitTactileQtApp(
+    application = QApplication.instance() or QApplication([])
+    window = DigitTactileQtWindow(
         demo_cfg=_config_section(cfg, "demo"),
         model_cfg=_config_section(cfg, "model"),
         data_cfg=_config_section(cfg, "data"),
     )
-    app.run()
+    window.show()
+    raise SystemExit(application.exec())
 
 
 if __name__ == "__main__":

@@ -30,3 +30,4 @@ data/external/*
 *.pt
 *.pth
 *.onnx
+/resources/

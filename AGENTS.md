@@ -91,3 +91,5 @@ Prefer adding a new YAML file to a config group over adding command-line flags o
 - Keep trainer orchestration in `src/ML/trainer.py` and entry points thin.
 - Keep demo code in `src/demo/` and avoid importing training-only dependencies in the demo path unless required.
 - Keep data collection entry points in `src/datacollection/` and avoid importing training-only dependencies there.
+- Prefer fail-fast behavior across the project: do not add defensive import fallbacks or broad exception handling that hides dependency, config, camera, model, data, or inference errors.
+- Avoid one-off helper functions; inline logic at the call site unless the helper is reused or isolates a substantial, cohesive operation.
