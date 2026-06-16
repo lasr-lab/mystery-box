@@ -56,7 +56,7 @@ The data collection key mapping is:
 ## Directory Responsibilities
 
 - `src/datacollection/`: Data collection code for raw DIGIT captures, including GUI-based single-frame capture tools.
-- `src/demo/`: Demo-facing code, including the web interface for live or recorded DIGIT tactile classification.
+- `src/demo/`: Demo-facing code, including the desktop interfaces for live or recorded DIGIT tactile classification.
 - `src/ML/`: Machine learning code, including training, evaluation, model definitions, dataset handling, and inference utilities.
 - `config/`: Hydra configuration files. Keep runtime parameters in YAML, not hard-coded in Python.
 - `data/raw/`: Raw captures from the DIGIT tactile sensor. Do not mutate these files in processing scripts.

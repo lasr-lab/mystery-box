@@ -14,14 +14,6 @@ Run the OpenCV frontend from the repository root:
 /home/max/miniforge3/envs/secai_demo_server/bin/python -m src.demo.app demo=default model=mobilevit_s
 ```
 
-Run the NiceGUI frontend from the repository root:
-
-```bash
-/home/max/miniforge3/envs/secai_demo_server/bin/python -m src.demo.nicegui_app demo=default model=mobilevit_s
-```
-
-Then open `http://127.0.0.1:8080` in a browser.
-
 Run the PySide6 desktop frontend from the repository root:
 
 ```bash
@@ -36,18 +28,13 @@ OpenCV controls:
 - `q` or `Esc`: quit
 - `r`: reinitialize the camera/sensor; this also resets the rolling prediction aggregate
 
-NiceGUI controls:
-
-- `r`: reinitialize the camera/sensor; this also resets the rolling prediction aggregate
-- The `Reinitialize camera` button performs the same reset as `r`
-
 PySide6 controls:
 
 - `r`: reinitialize the camera/sensor; this also resets the rolling prediction aggregate
 - The `Reinitialize camera` button performs the same reset as `r`
 - `q`, `Esc`, or `Ctrl+Q`: quit
 
-All frontends show the current frame prediction with its softmax scores, plus
+Both frontends show the current frame prediction with its softmax scores, plus
 the aggregate prediction over the last configured rolling window.
 
 No-camera smoke check:

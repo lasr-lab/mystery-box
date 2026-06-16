@@ -1,4 +1,5 @@
 name: tactile_demo
+# Shared runtime settings for the retained OpenCV and PySide6 frontends.
 model_checkpoint: ${hydra:runtime.cwd}/models/${model.name}.pt
 device: auto
 
