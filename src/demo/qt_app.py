@@ -37,7 +37,14 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QImage, QKeySequence, QPainter, QPixmap, QShortcut
+from PySide6.QtGui import (
+    QImage,
+    QKeySequence,
+    QPainter,
+    QPixmap,
+    QShortcut,
+    QTransform,
+)
 from PySide6.QtSvg import QSvgRenderer
 
 from PySide6.QtWidgets import (
@@ -49,7 +56,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QProgressBar,
-    QSizePolicy,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -78,6 +84,7 @@ class FrameResult:
     """One capture/inference update emitted from the worker thread."""
 
     frame_bgr: np.ndarray
+    is_sensor_frame: bool
     status: str
     camera_source: Optional[str]
     device: Optional[str]
@@ -94,6 +101,45 @@ class ProbabilityRow:
     label: QLabel
     bar: QProgressBar
     percent: QLabel
+
+
+class AspectRatioVideoStage(QWidget):
+    """Centers the video label at the rotated DIGIT frame aspect ratio."""
+
+    resized = Signal()
+
+    def __init__(
+        self,
+        *,
+        aspect_width: int,
+        aspect_height: int,
+        parent: Optional[QWidget],
+    ) -> None:
+        super().__init__(parent)
+        self.aspect_width = aspect_width
+        self.aspect_height = aspect_height
+        self.label = QLabel(self)
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setObjectName("videoLabel")
+        self.setMinimumSize(320, 240)
+
+    def resizeEvent(self, event: Any) -> None:
+        super().resizeEvent(event)
+        width = self.width()
+        height = self.height()
+        if width <= 0 or height <= 0:
+            return
+
+        label_height = height
+        label_width = int(round(label_height * self.aspect_width / self.aspect_height))
+        if label_width > width:
+            label_width = width
+            label_height = int(round(label_width * self.aspect_height / self.aspect_width))
+
+        x = (width - label_width) // 2
+        y = (height - label_height) // 2
+        self.label.setGeometry(x, y, max(1, label_width), max(1, label_height))
+        self.resized.emit()
 
 
 LANGUAGE_ALIASES = {
@@ -127,6 +173,7 @@ UI_TEXT = {
         "loading": "loading",
         "status_initial": "Starting demo.",
         "current": "Current",
+        "aggregate": "Aggregate",
         "unavailable": "unavailable",
         "sensor_preview_disabled": "Sensor preview disabled",
         "reinitializing_camera": "Reinitializing camera",
@@ -154,6 +201,7 @@ UI_TEXT = {
         "loading": "l\u00e4dt",
         "status_initial": "Demo startet.",
         "current": "Aktuell",
+        "aggregate": "Aggregiert",
         "unavailable": "nicht verf\u00fcgbar",
         "sensor_preview_disabled": "Sensorvorschau deaktiviert",
         "reinitializing_camera": "Kamera startet neu",
@@ -292,6 +340,7 @@ class CaptureInferenceWorker(QObject):
                 frame_bgr=self._placeholder_frame(
                     _text(self.language, "reinitializing_camera")
                 ),
+                is_sensor_frame=False,
                 prediction_label=None,
                 probabilities=None,
             )
@@ -424,6 +473,7 @@ class CaptureInferenceWorker(QObject):
         self.frame_ready.emit(
             self._frame_result(
                 frame_bgr=display_frame,
+                is_sensor_frame=self.show_sensor_preview,
                 prediction_label=prediction_label,
                 probabilities=probabilities,
             )
@@ -433,6 +483,7 @@ class CaptureInferenceWorker(QObject):
         self,
         *,
         frame_bgr: np.ndarray,
+        is_sensor_frame: bool,
         prediction_label: Optional[str],
         probabilities: Optional[np.ndarray],
     ) -> FrameResult:
@@ -443,6 +494,7 @@ class CaptureInferenceWorker(QObject):
         )
         return FrameResult(
             frame_bgr=frame_bgr,
+            is_sensor_frame=is_sensor_frame,
             status=self.status,
             camera_source=self.camera_source,
             device=str(self.classifier.device) if self.classifier is not None else None,
@@ -553,15 +605,14 @@ class DigitTactileQtWindow(QMainWindow):
         video_layout.setContentsMargins(12, 12, 12, 12)
         video_layout.setSpacing(10)
 
-        self.video_label = QLabel(video_panel)
-        self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.video_label.setMinimumSize(640, 480)
-        self.video_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Expanding,
+        self.video_stage = AspectRatioVideoStage(
+            aspect_width=3,
+            aspect_height=4,
+            parent=video_panel,
         )
-        self.video_label.setObjectName("videoLabel")
-        video_layout.addWidget(self.video_label, stretch=1)
+        self.video_stage.resized.connect(self._resize_video_pixmap)
+        self.video_label = self.video_stage.label
+        video_layout.addWidget(self.video_stage, stretch=1)
 
         controls_layout = QHBoxLayout()
         self.reinitialize_button = QPushButton(video_panel)
@@ -791,7 +842,6 @@ class DigitTactileQtWindow(QMainWindow):
             }
             QLabel#videoLabel {
                 background: #06111f;
-                border-radius: 10px;
                 color: #c9e7ef;
             }
             QPushButton {
@@ -931,7 +981,7 @@ class DigitTactileQtWindow(QMainWindow):
                 f"{self._tr('current')}: {self._tr('unavailable')}"
             )
             self.aggregate_title.setText(
-                f"0/{self.aggregate_window_frames}: {self._tr('unavailable')}"
+                f"{self._tr('aggregate')}: {self._tr('unavailable')}"
             )
             return
 
@@ -954,13 +1004,13 @@ class DigitTactileQtWindow(QMainWindow):
             aggregate_label = self._label_for_probabilities(aggregate_probabilities)
             aggregate_confidence = float(np.max(aggregate_probabilities))
             self.aggregate_title.setText(
-                f"{self._last_aggregate_count}/{self.aggregate_window_frames}: "
+                f"{self._tr('aggregate')}: "
                 f"{self._display_class_name(aggregate_label)} "
                 f"({aggregate_confidence:.0%})"
             )
         else:
             self.aggregate_title.setText(
-                f"0/{self.aggregate_window_frames}: {self._tr('unavailable')}"
+                f"{self._tr('aggregate')}: {self._tr('unavailable')}"
             )
 
     @Slot(bool)
@@ -1036,7 +1086,7 @@ class DigitTactileQtWindow(QMainWindow):
 
     @Slot(object)
     def _handle_frame_result(self, result: FrameResult) -> None:
-        self._set_video_frame(result.frame_bgr)
+        self._set_video_frame(result.frame_bgr, rotate_left=result.is_sensor_frame)
         self._last_camera_source = result.camera_source
         if result.device is not None:
             self._last_device = result.device
@@ -1121,7 +1171,7 @@ class DigitTactileQtWindow(QMainWindow):
                 else "font-weight: 400; color: #17324f;"
             )
 
-    def _set_video_frame(self, frame_bgr: np.ndarray) -> None:
+    def _set_video_frame(self, frame_bgr: np.ndarray, *, rotate_left: bool) -> None:
         frame = np.asarray(frame_bgr)
         if frame.ndim != 3 or frame.shape[2] != 3:
             raise ValueError(f"Invalid frame shape: {frame.shape}")
@@ -1135,19 +1185,27 @@ class DigitTactileQtWindow(QMainWindow):
             int(frame.strides[0]),
             QImage.Format.Format_BGR888,
         ).copy()
+        if rotate_left:
+            image = image.transformed(
+                QTransform().rotate(-90),
+                Qt.TransformationMode.SmoothTransformation,
+            )
         self.last_pixmap = QPixmap.fromImage(image)
         self._resize_video_pixmap()
 
     def _resize_video_pixmap(self) -> None:
         if self.last_pixmap is None:
             return
-        self.video_label.setPixmap(
-            self.last_pixmap.scaled(
-                self.video_label.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
+        target_size = self.video_label.size()
+        if target_size.width() <= 0 or target_size.height() <= 0:
+            return
+
+        scaled_pixmap = self.last_pixmap.scaled(
+            target_size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
         )
+        self.video_label.setPixmap(scaled_pixmap)
 
     def _set_status_style(self, status: str) -> None:
         status_lower = status.lower()
@@ -1215,7 +1273,8 @@ def main(cfg: DictConfig) -> None:
         model_cfg=_config_section(cfg, "model"),
         data_cfg=_config_section(cfg, "data"),
     )
-    window.show()
+    # window.show()
+    window.showMaximized()
     raise SystemExit(application.exec())
 
 
