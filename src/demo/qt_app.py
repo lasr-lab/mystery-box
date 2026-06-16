@@ -7,12 +7,19 @@ import re
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
+import sys
+import typing
 from typing import Any, Optional
 
 import cv2
 import hydra
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
+
+# PySide6 exposes a typing backport marker as `typing.Self` on Python 3.9, which can
+# make torchvision annotation handling fail if torchvision is imported afterwards.
+if sys.version_info < (3, 11) and hasattr(typing, "Self"):
+    del typing.Self
 
 # Import the Torch/TorchVision inference stack before PySide6. With the current
 # Python 3.9 + Torch 2.7 + TorchVision 0.22 stack, importing PySide6 first can
