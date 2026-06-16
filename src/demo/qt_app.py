@@ -56,6 +56,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QProgressBar,
+    QScrollArea,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -629,7 +630,26 @@ class DigitTactileQtWindow(QMainWindow):
         side_panel.setObjectName("sidePanel")
         side_panel.setMinimumWidth(390)
         side_panel.setMaximumWidth(480)
-        side_layout = QVBoxLayout(side_panel)
+        side_panel_layout = QVBoxLayout(side_panel)
+        side_panel_layout.setContentsMargins(0, 0, 0, 0)
+        side_panel_layout.setSpacing(0)
+
+        self.side_panel_scroll_area = QScrollArea(side_panel)
+        self.side_panel_scroll_area.setObjectName("sidePanelScrollArea")
+        self.side_panel_scroll_area.setWidgetResizable(True)
+        self.side_panel_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.side_panel_scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.side_panel_scroll_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.side_panel_scroll_area.viewport().setObjectName("sidePanelScrollViewport")
+        self.side_panel_scroll_area.viewport().setAutoFillBackground(False)
+
+        side_panel_content = QWidget(self.side_panel_scroll_area)
+        side_panel_content.setObjectName("sidePanelScrollContent")
+        side_layout = QVBoxLayout(side_panel_content)
         side_layout.setContentsMargins(18, 18, 18, 18)
         side_layout.setSpacing(12)
 
@@ -639,7 +659,7 @@ class DigitTactileQtWindow(QMainWindow):
         brand_layout = QVBoxLayout()
         brand_layout.setContentsMargins(0, 0, 0, 0)
         brand_layout.setSpacing(2)
-        self.logo_label = QLabel(side_panel)
+        self.logo_label = QLabel(side_panel_content)
         self.logo_label.setObjectName("secaiLogo")
         self.logo_label.setAlignment(
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
@@ -697,9 +717,9 @@ class DigitTactileQtWindow(QMainWindow):
 
         language_layout = QHBoxLayout()
         language_layout.addStretch(1)
-        self.language_label = QLabel(side_panel)
+        self.language_label = QLabel(side_panel_content)
         self.language_label.setObjectName("languageLabel")
-        self.language_combo = QComboBox(side_panel)
+        self.language_combo = QComboBox(side_panel_content)
         self._refresh_language_combo()
         self.language_combo.currentIndexChanged.connect(
             self._handle_language_changed
@@ -709,17 +729,17 @@ class DigitTactileQtWindow(QMainWindow):
         header_layout.addLayout(language_layout)
         side_layout.addLayout(header_layout)
 
-        self.title_label = QLabel(side_panel)
+        self.title_label = QLabel(side_panel_content)
         self.title_label.setObjectName("titleLabel")
         self.title_label.setWordWrap(True)
         side_layout.addWidget(self.title_label)
 
-        self.instructions_label = QLabel(side_panel)
+        self.instructions_label = QLabel(side_panel_content)
         self.instructions_label.setObjectName("instructionsLabel")
         self.instructions_label.setWordWrap(True)
         side_layout.addWidget(self.instructions_label)
 
-        self.details_toggle = QToolButton(side_panel)
+        self.details_toggle = QToolButton(side_panel_content)
         self.details_toggle.setObjectName("detailsToggle")
         self.details_toggle.setCheckable(True)
         self.details_toggle.setToolButtonStyle(
@@ -728,14 +748,15 @@ class DigitTactileQtWindow(QMainWindow):
         self.details_toggle.toggled.connect(self._set_details_visible)
         side_layout.addWidget(self.details_toggle)
 
-        self.details_content = QWidget(side_panel)
+        self.details_content = QWidget(side_panel_content)
+        self.details_content.setObjectName("detailsContent")
         details_layout = QVBoxLayout(self.details_content)
         details_layout.setContentsMargins(0, 0, 0, 0)
         details_layout.setSpacing(12)
 
-        self.camera_label = QLabel(side_panel)
-        self.inference_label = QLabel(side_panel)
-        self.status_label = QLabel(side_panel)
+        self.camera_label = QLabel(self.details_content)
+        self.inference_label = QLabel(self.details_content)
+        self.status_label = QLabel(self.details_content)
         self.status_label.setWordWrap(True)
         details_layout.addWidget(self.camera_label)
         details_layout.addWidget(self.inference_label)
@@ -743,7 +764,7 @@ class DigitTactileQtWindow(QMainWindow):
 
         details_layout.addWidget(self._separator(self.details_content))
 
-        self.current_title = QLabel(side_panel)
+        self.current_title = QLabel(self.details_content)
         self.current_title.setObjectName("sectionTitle")
         details_layout.addWidget(self.current_title)
         self.current_rows_container = QWidget(self.details_content)
@@ -754,23 +775,25 @@ class DigitTactileQtWindow(QMainWindow):
 
         side_layout.addWidget(self.details_content)
 
-        side_layout.addWidget(self._separator(side_panel))
+        side_layout.addWidget(self._separator(side_panel_content))
 
-        self.aggregate_title = QLabel(side_panel)
+        self.aggregate_title = QLabel(side_panel_content)
         self.aggregate_title.setObjectName("sectionTitle")
         side_layout.addWidget(self.aggregate_title)
-        self.aggregate_rows_container = QWidget(side_panel)
+        self.aggregate_rows_container = QWidget(side_panel_content)
         self.aggregate_rows_layout = QVBoxLayout(self.aggregate_rows_container)
         self.aggregate_rows_layout.setContentsMargins(0, 0, 0, 0)
         self.aggregate_rows_layout.setSpacing(6)
         side_layout.addWidget(self.aggregate_rows_container)
         side_layout.addStretch(1)
-        self.attribution_label = QLabel(side_panel)
+        self.attribution_label = QLabel(side_panel_content)
         self.attribution_label.setObjectName("attributionLabel")
         self.attribution_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.attribution_label.setWordWrap(True)
         side_layout.addWidget(self.attribution_label)
 
+        self.side_panel_scroll_area.setWidget(side_panel_content)
+        side_panel_layout.addWidget(self.side_panel_scroll_area)
         root_layout.addWidget(side_panel, stretch=1)
         self._apply_styles()
         self._apply_translations()
@@ -869,6 +892,34 @@ class DigitTactileQtWindow(QMainWindow):
             }
             QToolButton#detailsToggle:hover {
                 background: #d8f0f4;
+            }
+            QScrollArea#sidePanelScrollArea,
+            QWidget#sidePanelScrollViewport,
+            QWidget#sidePanelScrollContent,
+            QWidget#detailsContent {
+                background: transparent;
+                border: 0;
+            }
+            QScrollArea#sidePanelScrollArea QScrollBar:vertical {
+                background: transparent;
+                width: 10px;
+                margin: 2px 0 2px 0;
+            }
+            QScrollArea#sidePanelScrollArea QScrollBar::handle:vertical {
+                background: #b7dfe8;
+                border-radius: 5px;
+                min-height: 28px;
+            }
+            QScrollArea#sidePanelScrollArea QScrollBar::handle:vertical:hover {
+                background: #8ecedb;
+            }
+            QScrollArea#sidePanelScrollArea QScrollBar::add-line:vertical,
+            QScrollArea#sidePanelScrollArea QScrollBar::sub-line:vertical,
+            QScrollArea#sidePanelScrollArea QScrollBar::add-page:vertical,
+            QScrollArea#sidePanelScrollArea QScrollBar::sub-page:vertical {
+                background: transparent;
+                border: 0;
+                height: 0;
             }
             QComboBox {
                 background: #f7fbfc;
