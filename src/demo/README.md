@@ -45,10 +45,10 @@ No-camera smoke check:
 
 ## Docker Deployment
 
-Build the CPU deployment image from the repository root:
+Build the CPU deployment image:
 
 ```bash
-docker build -t secai-demo-tactile .
+docker build -t secai-demo-tactile https://github.com/lasr-lab/mystery-box.git
 ```
 
 By default, the container downloads the selected checkpoint from
@@ -65,13 +65,15 @@ Run the PySide6 frontend with X11 forwarding and a DIGIT camera passed through:
 
 ```bash
 xhost +local:docker
+
 docker run --rm -it \
   --device=/dev/video2 \
-  -e DISPLAY="${DISPLAY}" \
+  -e DISPLAY=$DISPLAY \
   -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
   secai-demo-tactile \
   model=mobilevit_s \
   demo.sensor.device_path=/dev/video2
+
 xhost -local:docker
 ```
 
