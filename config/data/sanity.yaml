@@ -34,7 +34,7 @@ augmentations:
   enabled: true
   horizontal_flip: true
   horizontal_flip_p: 0.5
-  # more invasive augmentations, also make sure to try without.
+  # more invasive augmentations
   random_rotation: true
   random_rotation_degrees: 10.0
   color_jitter: true

@@ -13,6 +13,9 @@ __pycache__/
 .idea/
 .vscode/
 
+# Local agent instructions
+AGENTS.md
+
 # Hydra outputs
 outputs/
 multirun/

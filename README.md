@@ -32,6 +32,15 @@ docker build \
   https://github.com/lasr-lab/mystery-box.git
 ```
 
+## Install With Mamba
+
+Create the local env:
+
+```bash
+mamba env create -f environment.yaml
+mamba activate secai_demo_server
+```
+
 ## Get Data
 
 Download the dataset from Google Drive:
@@ -94,14 +103,14 @@ xhost -local:docker
 Local Qt demo:
 
 ```bash
-source /home/max/miniforge3/bin/activate secai_demo_server
+mamba activate secai_demo_server
 python -m src.demo.qt_app demo=default model=mobilevit_s
 ```
 
 Local OpenCV demo:
 
 ```bash
-source /home/max/miniforge3/bin/activate secai_demo_server
+mamba activate secai_demo_server
 python -m src.demo.app demo=default model=mobilevit_s
 ```
 
@@ -112,7 +121,7 @@ Available model configs: `efficientnet_b0`, `mobilevit_s`, `mobilevitv2_100`.
 Collect DIGIT frames into `data/raw/digit_fabrics/<class_name>/`:
 
 ```bash
-source /home/max/miniforge3/bin/activate secai_demo_server
+mamba activate secai_demo_server
 python -m src.datacollection.collector datacollection=default
 ```
 
@@ -129,7 +138,7 @@ python -m src.datacollection.collector datacollection=default datacollection.sen
 Train from `data/raw/digit_fabrics/`:
 
 ```bash
-source /home/max/miniforge3/bin/activate secai_demo_server
+mamba activate secai_demo_server
 python -m src.ML.train model=mobilevit_s
 ```
 
