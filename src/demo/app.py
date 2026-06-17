@@ -11,6 +11,8 @@ import hydra
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
 
+from src.demo.inference import DemoClassifier
+
 
 class DigitTactileDemoApp:
     """OpenCV DIGIT tactile classification demo."""
@@ -32,14 +34,18 @@ class DigitTactileDemoApp:
             1, int(demo_cfg.get("aggregate_window_frames", 60))
         )
 
-        self.classifier = self._load_classifier(model_cfg, data_cfg)
+        self.classifier = DemoClassifier(
+            str(self.demo_cfg["model_checkpoint"]),
+            model_cfg,
+            data_cfg,
+            device=str(self.demo_cfg.get("device", "auto")),
+        )
         self.class_names = [str(name) for name in self.classifier.class_names]
         if not self.class_names:
             raise RuntimeError("Demo classifier did not provide any class names.")
 
         self.camera: Optional[Any] = None
         self.camera_source: Optional[str] = None
-        self.last_frame: Optional[np.ndarray] = None
         self.window_ready = False
         self.probability_window: deque[np.ndarray] = deque(
             maxlen=self.aggregate_window_frames
@@ -92,16 +98,7 @@ class DigitTactileDemoApp:
         try:
             while True:
                 frame = self._read_frame()
-                if frame is None:
-                    preview = self._draw_error_preview()
-                    self._ensure_window(preview)
-                    cv2.imshow(self.window_name, preview)
-                    if self._handle_key(cv2.waitKey(self._wait_delay()) & 0xFF):
-                        break
-                    continue
-
                 self._require_expected_size(frame)
-                self.last_frame = frame.copy()
                 prediction = self.classifier.predict(frame)
                 probabilities = self._prediction_probabilities(prediction)
                 self.probability_window.append(probabilities)
@@ -122,25 +119,6 @@ class DigitTactileDemoApp:
             self._release_camera()
             cv2.destroyAllWindows()
 
-    def _load_classifier(
-        self,
-        model_cfg: dict[str, Any],
-        data_cfg: dict[str, Any],
-    ) -> Any:
-        try:
-            from src.demo.inference import DemoClassifier
-        except ImportError as exc:
-            raise RuntimeError(
-                "src.demo.inference.DemoClassifier is required for the OpenCV demo."
-            ) from exc
-
-        return DemoClassifier(
-            str(self.demo_cfg["model_checkpoint"]),
-            model_cfg,
-            data_cfg,
-            device=str(self.demo_cfg.get("device", "auto")),
-        )
-
     def _open_camera(self) -> None:
         old_camera = self.camera
         self.camera = None
@@ -152,44 +130,53 @@ class DigitTactileDemoApp:
         backend = getattr(cv2, backend_name)
         capture_source = self._opencv_capture_source(source, backend)
         camera = cv2.VideoCapture(capture_source, backend)
+        camera_ready = False
 
         try:
-            fourcc = cv2.VideoWriter_fourcc(*str(self.sensor_cfg["fourcc"])[:4])
-            camera.set(cv2.CAP_PROP_FOURCC, fourcc)
-            camera.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.sensor_cfg["width"]))
-            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self.sensor_cfg["height"]))
-            camera.set(cv2.CAP_PROP_FPS, int(self.sensor_cfg["fps"]))
-
             if not camera.isOpened():
                 raise RuntimeError(f"Could not open DIGIT camera source {source}.")
 
+            fourcc = cv2.VideoWriter_fourcc(*str(self.sensor_cfg["fourcc"])[:4])
+            if not camera.set(cv2.CAP_PROP_FOURCC, fourcc):
+                raise RuntimeError(f"Could not set demo.sensor.fourcc for {source}.")
+            if not camera.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.sensor_cfg["width"])):
+                raise RuntimeError(f"Could not set demo.sensor.width for {source}.")
+            if not camera.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self.sensor_cfg["height"])):
+                raise RuntimeError(f"Could not set demo.sensor.height for {source}.")
+            if not camera.set(cv2.CAP_PROP_FPS, int(self.sensor_cfg["fps"])):
+                raise RuntimeError(f"Could not set demo.sensor.fps for {source}.")
+
             self._warm_camera(camera, source)
-        except Exception:
-            camera.release()
-            raise
+            status = (
+                f"Camera {source}: "
+                f"{int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
+                f"{int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))}, "
+                f"{camera.get(cv2.CAP_PROP_FPS):.1f} fps, "
+                f"{self._fourcc_to_string(int(camera.get(cv2.CAP_PROP_FOURCC)))}"
+            )
+            camera_ready = True
+        finally:
+            if not camera_ready:
+                camera.release()
 
         self.camera = camera
         self.camera_source = source
         self.window_ready = False
         self.probability_window.clear()
-        self.status = (
-            f"Camera {source}: "
-            f"{int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
-            f"{int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))}, "
-            f"{camera.get(cv2.CAP_PROP_FPS):.1f} fps, "
-            f"{self._fourcc_to_string(int(camera.get(cv2.CAP_PROP_FOURCC)))}"
-        )
+        self.status = status
         print(self.status)
 
     def _warm_camera(self, camera: Any, source: str) -> None:
         warmup_frames = int(self.sensor_cfg["warmup_frames"])
+        if warmup_frames < 0:
+            raise RuntimeError("demo.sensor.warmup_frames must be non-negative.")
         if warmup_frames <= 0:
             return
 
         read_success = False
         for _ in range(warmup_frames):
-            ok, _ = camera.read()
-            read_success = read_success or ok
+            ok, frame = camera.read()
+            read_success = read_success or (ok and frame is not None)
 
         if not read_success:
             raise RuntimeError(
@@ -213,17 +200,15 @@ class DigitTactileDemoApp:
     @staticmethod
     def _find_video_device(device_name: str) -> Optional[str]:
         matches: list[tuple[int, str]] = []
+        expected_name = device_name.lower()
         for name_file in sorted(glob.glob("/sys/class/video4linux/video*/name")):
             name_path = Path(name_file)
-            try:
-                actual_name = name_path.read_text(encoding="utf-8").strip()
-            except OSError:
-                continue
-            if device_name.lower() not in actual_name.lower():
+            actual_name = name_path.read_text(encoding="utf-8").strip()
+            if expected_name not in actual_name.lower():
                 continue
             matches.append(
                 (
-                    DigitTactileDemoApp._device_index(name_path.parent),
+                    int((name_path.parent / "index").read_text(encoding="utf-8").strip()),
                     f"/dev/{name_path.parent.name}",
                 )
             )
@@ -245,13 +230,6 @@ class DigitTactileDemoApp:
         return source
 
     @staticmethod
-    def _device_index(video_dir: Path) -> int:
-        try:
-            return int((video_dir / "index").read_text(encoding="utf-8").strip())
-        except (OSError, ValueError):
-            return 999
-
-    @staticmethod
     def _fourcc_to_string(value: int) -> str:
         if value <= 0:
             return "unknown"
@@ -269,30 +247,18 @@ class DigitTactileDemoApp:
         if key in (27, ord("q"), ord("Q")):
             return True
         if key in (ord("r"), ord("R")):
-            self._reinitialize_camera()
+            self._open_camera()
         return False
 
-    def _reinitialize_camera(self) -> None:
-        try:
-            self._open_camera()
-        except (AttributeError, OSError, RuntimeError, cv2.error) as exc:
-            self.status = f"Camera reinit failed: {exc}"
-            print(self.status)
-
-    def _read_frame(self) -> Optional[np.ndarray]:
+    def _read_frame(self) -> np.ndarray:
         if self.camera is None:
-            self.status = "Camera unavailable. Press r to reinit."
-            return None
+            raise RuntimeError("DIGIT camera is not opened.")
 
-        try:
-            ok, frame = self.camera.read()
-        except cv2.error as exc:
-            self.status = f"Frame read failed: {exc}. Press r to reinit."
-            return None
-
+        ok, frame = self.camera.read()
         if not ok or frame is None:
-            self.status = "Frame read failed. Press r to reinit."
-            return None
+            raise RuntimeError(
+                f"Failed to read frame from DIGIT camera source {self.camera_source}."
+            )
         return frame
 
     def _prediction_probabilities(self, prediction: Any) -> np.ndarray:
@@ -381,78 +347,6 @@ class DigitTactileDemoApp:
             self._put_text(video, "Sensor preview disabled", 20, 30, (210, 210, 210))
         return np.hstack((panel, video))
 
-    def _draw_error_preview(self) -> np.ndarray:
-        frame = self._error_frame()
-        panel_width = int(self.gui_cfg["side_panel_width"])
-        panel = self._new_panel(frame.shape[0], panel_width, error=True)
-        self._draw_error_panel(panel)
-
-        video = frame.copy()
-        cv2.rectangle(video, (0, 0), (video.shape[1], 64), (18, 22, 28), -1)
-        self._put_text(video, "Frame unavailable", 20, 30, (80, 190, 255), 0.62, 2)
-        self._put_text(
-            video,
-            self._short_status(video.shape[1]),
-            20,
-            54,
-            (235, 235, 235),
-        )
-        return np.hstack((panel, video))
-
-    def _error_frame(self) -> np.ndarray:
-        if self.last_frame is not None:
-            return self.last_frame
-
-        expected_width = int(self.sensor_cfg["width"])
-        expected_height = int(self.sensor_cfg["height"])
-        return np.full((expected_height, expected_width, 3), (10, 10, 10), dtype=np.uint8)
-
-    def _draw_error_panel(self, panel: np.ndarray) -> None:
-        height, width = panel.shape[:2]
-        x = 14
-        self._draw_header(panel, mode="error")
-
-        card_y = 52
-        card_h = max(92, height - card_y - 44)
-        card_h = min(card_h, 132)
-        self._draw_card(panel, x, card_y, width - (2 * x), card_h, (43, 38, 34))
-        cv2.rectangle(
-            panel,
-            (x, card_y),
-            (x + 5, card_y + card_h - 1),
-            (80, 190, 255),
-            -1,
-        )
-        self._put_text(
-            panel,
-            "CAMERA ATTENTION",
-            x + 16,
-            card_y + 21,
-            (130, 210, 255),
-            0.34,
-            1,
-        )
-        self._put_text(panel, "NO FRAME", x + 16, card_y + 56, (245, 245, 245), 0.78, 2)
-        self._put_text(
-            panel,
-            "The DIGIT stream did not return an image.",
-            x + 16,
-            card_y + 82,
-            (220, 220, 220),
-            0.31,
-        )
-        self._put_text(
-            panel,
-            "Press r to reinitialize.",
-            x + 16,
-            card_y + 101,
-            (80, 190, 255),
-            0.34,
-            1,
-        )
-
-        self._draw_status_strip(panel)
-
     def _draw_panel(
         self,
         panel: np.ndarray,
@@ -467,7 +361,7 @@ class DigitTactileDemoApp:
         current_index = int(np.argmax(probabilities))
         current_accent = self._class_accent(current_index)
 
-        self._draw_header(panel, mode="live")
+        self._draw_header(panel)
         hero_y = 48
         hero_h = 58
         self._draw_current_summary(
@@ -517,11 +411,9 @@ class DigitTactileDemoApp:
 
         self._draw_status_strip(panel)
 
-    def _new_panel(self, height: int, width: int, error: bool = False) -> np.ndarray:
+    def _new_panel(self, height: int, width: int) -> np.ndarray:
         top = np.array((18, 21, 28), dtype=np.float32)
         bottom = np.array((28, 39, 46), dtype=np.float32)
-        if error:
-            bottom = np.array((42, 35, 34), dtype=np.float32)
 
         mix = np.linspace(0.0, 1.0, height, dtype=np.float32)[:, None]
         rows = ((top * (1.0 - mix)) + (bottom * mix)).astype(np.uint8)
@@ -531,17 +423,13 @@ class DigitTactileDemoApp:
         cv2.circle(panel, (30, height - 12), 74, (23, 31, 38), -1)
         return panel
 
-    def _draw_header(self, panel: np.ndarray, mode: str = "live") -> None:
-        mode = mode.lower()
+    def _draw_header(self, panel: np.ndarray) -> None:
         _, width = panel.shape[:2]
         x = 14
         self._put_text(panel, "DIGIT TACTILE", x, 18, (190, 230, 255), 0.43, 1)
-        subtitle = (
-            "CAMERA ATTENTION" if mode == "error" else "LIVE MATERIAL CLASSIFIER"
-        )
         self._put_text(
             panel,
-            subtitle,
+            "LIVE MATERIAL CLASSIFIER",
             x,
             34,
             (132, 150, 160),
@@ -549,17 +437,7 @@ class DigitTactileDemoApp:
             1,
         )
 
-        if mode == "error":
-            badge_text = "NO FRAME"
-            badge_background = (48, 44, 38)
-            badge_dot = (80, 190, 255)
-            badge_text_color = (195, 235, 255)
-        else:
-            badge_text = "LIVE"
-            badge_background = (32, 62, 54)
-            badge_dot = (120, 235, 160)
-            badge_text_color = (195, 245, 210)
-
+        badge_text = "LIVE"
         text_w = cv2.getTextSize(
             badge_text,
             cv2.FONT_HERSHEY_SIMPLEX,
@@ -574,16 +452,16 @@ class DigitTactileDemoApp:
             9,
             pill_w,
             18,
-            badge_background,
+            (32, 62, 54),
             9,
         )
-        cv2.circle(panel, (pill_x + 11, 18), 3, badge_dot, -1)
+        cv2.circle(panel, (pill_x + 11, 18), 3, (120, 235, 160), -1)
         self._put_text(
             panel,
             badge_text,
             pill_x + 18,
             21,
-            badge_text_color,
+            (195, 245, 210),
             0.25,
             1,
         )

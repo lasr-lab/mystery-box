@@ -40,7 +40,7 @@ class DemoClassifier:
             raise FileNotFoundError(f"Checkpoint not found: {self._checkpoint_path}")
 
         self._device = _select_device(device)
-        checkpoint = _load_checkpoint(self._checkpoint_path)
+        checkpoint = torch.load(self._checkpoint_path, map_location="cpu", weights_only=False)
         if not isinstance(checkpoint, Mapping):
             raise ValueError(f"Checkpoint must be a mapping, got {type(checkpoint).__name__}.")
 
@@ -115,13 +115,6 @@ class DemoClassifier:
         )
 
 
-def _load_checkpoint(path: Path) -> Mapping[str, Any]:
-    try:
-        return torch.load(path, map_location="cpu", weights_only=False)
-    except TypeError:
-        return torch.load(path, map_location="cpu")
-
-
 def _select_device(device: str | torch.device) -> torch.device:
     if isinstance(device, torch.device):
         selected = device
@@ -161,10 +154,7 @@ def _to_container(cfg: Any) -> Any:
     if cfg is None:
         return None
     if OmegaConf.is_config(cfg):
-        try:
-            return OmegaConf.to_container(cfg, resolve=True)
-        except Exception:
-            return OmegaConf.to_container(cfg, resolve=False)
+        return OmegaConf.to_container(cfg, resolve=True)
     if isinstance(cfg, Mapping):
         return {key: _to_container(value) for key, value in cfg.items()}
     if isinstance(cfg, list):

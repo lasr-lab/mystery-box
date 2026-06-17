@@ -48,12 +48,14 @@ class DigitImageCollector:
 
         try:
             while True:
+                if self.camera is None:
+                    raise RuntimeError("DIGIT camera is not opened.")
+
                 ok, frame = self.camera.read()
-                if not ok:
-                    self.status = "Frame read failed. Press r to reinit."
-                    if self._handle_key(cv2.waitKey(self._wait_delay()) & 0xFF, None):
-                        break
-                    continue
+                if not ok or frame is None:
+                    raise RuntimeError(
+                        f"Failed to read frame from DIGIT camera source {self.camera_source}."
+                    )
 
                 self._require_expected_size(frame)
                 self._save_recording_frame(frame)
@@ -73,31 +75,63 @@ class DigitImageCollector:
         backend = getattr(cv2, str(self.sensor_cfg["backend"]))
         capture_source = self._opencv_capture_source(source, backend)
         camera = cv2.VideoCapture(capture_source, backend)
+        camera_ready = False
 
-        fourcc = cv2.VideoWriter_fourcc(*str(self.sensor_cfg["fourcc"])[:4])
-        camera.set(cv2.CAP_PROP_FOURCC, fourcc)
-        camera.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.sensor_cfg["width"]))
-        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self.sensor_cfg["height"]))
-        camera.set(cv2.CAP_PROP_FPS, int(self.sensor_cfg["fps"]))
+        try:
+            if not camera.isOpened():
+                raise RuntimeError(f"Could not open DIGIT camera source {source}.")
 
-        if not camera.isOpened():
-            raise RuntimeError(f"Could not open DIGIT camera source {source}.")
+            fourcc = cv2.VideoWriter_fourcc(*str(self.sensor_cfg["fourcc"])[:4])
+            if not camera.set(cv2.CAP_PROP_FOURCC, fourcc):
+                raise RuntimeError(
+                    f"Could not set datacollection.sensor.fourcc for {source}."
+                )
+            if not camera.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.sensor_cfg["width"])):
+                raise RuntimeError(
+                    f"Could not set datacollection.sensor.width for {source}."
+                )
+            if not camera.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self.sensor_cfg["height"])):
+                raise RuntimeError(
+                    f"Could not set datacollection.sensor.height for {source}."
+                )
+            if not camera.set(cv2.CAP_PROP_FPS, int(self.sensor_cfg["fps"])):
+                raise RuntimeError(
+                    f"Could not set datacollection.sensor.fps for {source}."
+                )
 
-        for _ in range(int(self.sensor_cfg["warmup_frames"])):
-            camera.read()
+            warmup_frames = int(self.sensor_cfg["warmup_frames"])
+            if warmup_frames < 0:
+                raise RuntimeError(
+                    "datacollection.sensor.warmup_frames must be non-negative."
+                )
+            if warmup_frames > 0:
+                read_success = False
+                for _ in range(warmup_frames):
+                    ok, frame = camera.read()
+                    read_success = read_success or (ok and frame is not None)
+                if not read_success:
+                    raise RuntimeError(
+                        f"Could not read warmup frames from DIGIT camera source {source}."
+                    )
+
+            status = (
+                f"Camera {source}: "
+                f"{int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
+                f"{int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))}, "
+                f"{camera.get(cv2.CAP_PROP_FPS):.1f} fps, "
+                f"{self._fourcc_to_string(int(camera.get(cv2.CAP_PROP_FOURCC)))}"
+            )
+            camera_ready = True
+        finally:
+            if not camera_ready:
+                camera.release()
 
         self.camera = camera
         self.camera_source = source
         self.window_ready = False
         self.recording_key = None
         self.recording_saved_count = 0
-        self.status = (
-            f"Camera {source}: "
-            f"{int(camera.get(cv2.CAP_PROP_FRAME_WIDTH))}x"
-            f"{int(camera.get(cv2.CAP_PROP_FRAME_HEIGHT))}, "
-            f"{camera.get(cv2.CAP_PROP_FPS):.1f} fps, "
-            f"{self._fourcc_to_string(int(camera.get(cv2.CAP_PROP_FOURCC)))}"
-        )
+        self.status = status
         print(self.status)
 
     def _camera_source(self) -> str:
@@ -117,17 +151,15 @@ class DigitImageCollector:
     @staticmethod
     def _find_video_device(device_name: str) -> Optional[str]:
         matches: list[tuple[int, str]] = []
+        expected_name = device_name.lower()
         for name_file in sorted(glob.glob("/sys/class/video4linux/video*/name")):
             name_path = Path(name_file)
-            try:
-                actual_name = name_path.read_text(encoding="utf-8").strip()
-            except OSError:
-                continue
-            if device_name.lower() not in actual_name.lower():
+            actual_name = name_path.read_text(encoding="utf-8").strip()
+            if expected_name not in actual_name.lower():
                 continue
             matches.append(
                 (
-                    DigitImageCollector._device_index(name_path.parent),
+                    int((name_path.parent / "index").read_text(encoding="utf-8").strip()),
                     f"/dev/{name_path.parent.name}",
                 )
             )
@@ -147,13 +179,6 @@ class DigitImageCollector:
             return int(source)
 
         return source
-
-    @staticmethod
-    def _device_index(video_dir: Path) -> int:
-        try:
-            return int((video_dir / "index").read_text(encoding="utf-8").strip())
-        except (OSError, ValueError):
-            return 999
 
     @staticmethod
     def _fourcc_to_string(value: int) -> str:

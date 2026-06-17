@@ -8,6 +8,7 @@ import random
 from pathlib import Path
 from typing import Any, Optional, Union
 
+import numpy as np
 import torch
 import wandb
 from omegaconf import OmegaConf
@@ -43,16 +44,11 @@ class Trainer:
 
     @staticmethod
     def set_seed(seed: int) -> None:
-        """Set deterministic seeds for Python, NumPy when present, and torch."""
+        """Set deterministic seeds for Python, NumPy, and torch."""
         os.environ["PYTHONHASHSEED"] = str(seed)
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
         random.seed(seed)
-        try:
-            import numpy as np
-
-            np.random.seed(seed)
-        except ImportError:
-            pass
+        np.random.seed(seed)
 
         torch.manual_seed(seed)
         if torch.cuda.is_available():
@@ -230,12 +226,7 @@ class Trainer:
     def _seed_worker(self, worker_id: int) -> None:
         worker_seed = self.seed + worker_id
         random.seed(worker_seed)
-        try:
-            import numpy as np
-
-            np.random.seed(worker_seed)
-        except ImportError:
-            pass
+        np.random.seed(worker_seed)
         torch.manual_seed(worker_seed)
 
     def _make_optimizer(self) -> torch.optim.Optimizer:
