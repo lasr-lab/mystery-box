@@ -85,6 +85,12 @@ Prefer adding a new YAML file to a config group over adding command-line flags o
 - Avoid committing large data files or model checkpoints unless explicitly requested.
 - Use clear names for runs and checkpoints so demo models can be traced back to training configs.
 
+## Demo UI Style
+
+- Follow the SECAI visual identity from `secai.org`: light/white surfaces, blue typography, cyan/teal primary accents, green secondary accents, clean rounded cards, and subtle dotted/composite motifs where useful.
+- Avoid unrelated visual directions such as purple defaults, generic yellow warning boxes, or dark toast overlays unless explicitly requested.
+- Warning and guidance overlays should feel like SECAI-branded status cards, not operating-system alerts.
+
 ## Python Conventions
 
 - This project currently keeps the package name `src/ML/` because that was requested. If refactoring later, prefer lowercase package names such as `src/ml/`.

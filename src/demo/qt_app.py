@@ -99,6 +99,8 @@ class FrameResult:
 class ProbabilityRow:
     """Widgets for one class row in a probability panel."""
 
+    class_name: str
+    source_index: int
     label: QLabel
     bar: QProgressBar
     percent: QLabel
@@ -122,6 +124,11 @@ class AspectRatioVideoStage(QWidget):
         self.label = QLabel(self)
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setObjectName("videoLabel")
+        self.warning_label = QLabel(self.label)
+        self.warning_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.warning_label.setObjectName("warningLabel")
+        self.warning_label.setVisible(False)
+        self.warning_label.setWordWrap(True)
         self.setMinimumSize(320, 240)
 
     def resizeEvent(self, event: Any) -> None:
@@ -140,7 +147,29 @@ class AspectRatioVideoStage(QWidget):
         x = (width - label_width) // 2
         y = (height - label_height) // 2
         self.label.setGeometry(x, y, max(1, label_width), max(1, label_height))
+        self.position_warning_label()
         self.resized.emit()
+
+    def position_warning_label(self) -> None:
+        label_width = self.label.width()
+        label_height = self.label.height()
+        if label_width <= 0 or label_height <= 0:
+            return
+
+        warning_width = max(1, min(label_width - 32, 520))
+        hint_height = self.warning_label.heightForWidth(warning_width)
+        if hint_height <= 0:
+            hint_height = self.warning_label.sizeHint().height()
+        max_height = max(44, min(120, label_height - 32))
+        warning_height = min(max_height, max(44, hint_height + 18))
+        warning_y = min(18, max(0, label_height - warning_height - 18))
+        self.warning_label.setGeometry(
+            (label_width - warning_width) // 2,
+            warning_y,
+            warning_width,
+            warning_height,
+        )
+        self.warning_label.raise_()
 
 
 LANGUAGE_ALIASES = {
@@ -175,7 +204,10 @@ UI_TEXT = {
         "status_initial": "Starting demo.",
         "current": "Current",
         "prediction": "Prediction",
+        "raw_aggregate": "Raw aggregate",
         "unavailable": "unavailable",
+        "warning_finger": "Do not touch the sensor, please.",
+        "warning_3dprint": "Touch the textiles, not the board.",
         "sensor_preview_disabled": "Sensor preview disabled",
         "reinitializing_camera": "Reinitializing camera",
     },
@@ -203,7 +235,10 @@ UI_TEXT = {
         "status_initial": "Demo startet.",
         "current": "Aktuell",
         "prediction": "Vorhersage",
+        "raw_aggregate": "Roh-Aggregat",
         "unavailable": "nicht verf\u00fcgbar",
+        "warning_finger": "Bitte den Sensor nicht ber\u00fchren.",
+        "warning_3dprint": "Bitte die Stoffe ber\u00fchren, nicht die Platte.",
         "sensor_preview_disabled": "Sensorvorschau deaktiviert",
         "reinitializing_camera": "Kamera startet neu",
     },
@@ -248,6 +283,30 @@ def _text(language: str, key: str) -> str:
     return UI_TEXT[language][key]
 
 
+def _configured_class_list(value: Any, config_path: str) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise RuntimeError(f"{config_path} must be a non-empty list of class names.")
+
+    known_classes = set(CLASS_DISPLAY_NAMES["en"])
+    class_names: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not item.strip():
+            raise RuntimeError(
+                f"{config_path}[{index}] must be a non-empty class name string."
+            )
+        class_name = item.strip()
+        if class_name not in known_classes:
+            raise RuntimeError(
+                f"{config_path}[{index}] references unknown class {class_name!r}."
+            )
+        if class_name in class_names:
+            raise RuntimeError(
+                f"{config_path} contains duplicate class {class_name!r}."
+            )
+        class_names.append(class_name)
+    return class_names
+
+
 class CaptureInferenceWorker(QObject):
     """Owns DIGIT camera capture and model inference on a background Qt thread."""
 
@@ -258,12 +317,14 @@ class CaptureInferenceWorker(QObject):
     def __init__(
         self,
         demo_cfg: dict[str, Any],
+        classifier: DemoClassifier,
         model_cfg: dict[str, Any],
         data_cfg: dict[str, Any],
         language: str,
     ) -> None:
         super().__init__()
         self.demo_cfg = demo_cfg
+        self.classifier = classifier
         self.model_cfg = model_cfg
         self.data_cfg = data_cfg
         self.language = _normalize_language(language)
@@ -273,8 +334,7 @@ class CaptureInferenceWorker(QObject):
         )
         self.show_sensor_preview = bool(demo_cfg.get("show_sensor_preview", True))
 
-        self.classifier: Optional[Any] = None
-        self.class_names: list[str] = []
+        self.class_names = [str(name) for name in self.classifier.class_names]
         self.camera: Optional[Any] = None
         self.camera_source: Optional[str] = None
         self.probability_window: deque[np.ndarray] = deque(
@@ -287,16 +347,6 @@ class CaptureInferenceWorker(QObject):
     @Slot()
     def start(self) -> None:
         """Load the model, open the camera, and start periodic capture."""
-
-        self.classifier = DemoClassifier(
-            str(self.demo_cfg["model_checkpoint"]),
-            self.model_cfg,
-            self.data_cfg,
-            device=str(self.demo_cfg.get("device", "auto")),
-        )
-        self.class_names = [str(name) for name in self.classifier.class_names]
-        if not self.class_names:
-            raise RuntimeError("Demo classifier did not provide any class names.")
 
         self.classifier_ready.emit(
             ClassifierInfo(
@@ -330,7 +380,7 @@ class CaptureInferenceWorker(QObject):
     def reinitialize_camera(self) -> None:
         """Reopen the configured DIGIT camera source."""
 
-        if self.classifier is None or self.stopping:
+        if self.stopping:
             return
 
         self.status = "Reinitializing camera..."
@@ -380,17 +430,27 @@ class CaptureInferenceWorker(QObject):
                 capture_source = int(source)
 
         camera = cv2.VideoCapture(capture_source, backend)
-        fourcc = cv2.VideoWriter_fourcc(*str(self.sensor_cfg["fourcc"])[:4])
-        camera.set(cv2.CAP_PROP_FOURCC, fourcc)
-        camera.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.sensor_cfg["width"]))
-        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self.sensor_cfg["height"]))
-        camera.set(cv2.CAP_PROP_FPS, int(self.sensor_cfg["fps"]))
-
         if not camera.isOpened():
             camera.release()
             raise RuntimeError(f"Could not open DIGIT camera source {source}.")
 
+        fourcc = cv2.VideoWriter_fourcc(*str(self.sensor_cfg["fourcc"])[:4])
+        if not camera.set(cv2.CAP_PROP_FOURCC, fourcc):
+            camera.release()
+            raise RuntimeError(f"Could not set demo.sensor.fourcc for {source}.")
+        if not camera.set(cv2.CAP_PROP_FRAME_WIDTH, int(self.sensor_cfg["width"])):
+            camera.release()
+            raise RuntimeError(f"Could not set demo.sensor.width for {source}.")
+        if not camera.set(cv2.CAP_PROP_FRAME_HEIGHT, int(self.sensor_cfg["height"])):
+            camera.release()
+            raise RuntimeError(f"Could not set demo.sensor.height for {source}.")
+        if not camera.set(cv2.CAP_PROP_FPS, int(self.sensor_cfg["fps"])):
+            camera.release()
+            raise RuntimeError(f"Could not set demo.sensor.fps for {source}.")
+
         warmup_frames = int(self.sensor_cfg["warmup_frames"])
+        if warmup_frames < 0:
+            raise RuntimeError("demo.sensor.warmup_frames must be non-negative.")
         read_success = warmup_frames <= 0
         for _ in range(warmup_frames):
             ok, _ = camera.read()
@@ -432,7 +492,7 @@ class CaptureInferenceWorker(QObject):
     def update_frame(self) -> None:
         """Read one camera frame, run inference, and emit the display payload."""
 
-        if self.classifier is None or self.stopping:
+        if self.stopping:
             return
 
         if self.camera is None:
@@ -498,7 +558,7 @@ class CaptureInferenceWorker(QObject):
             is_sensor_frame=is_sensor_frame,
             status=self.status,
             camera_source=self.camera_source,
-            device=str(self.classifier.device) if self.classifier is not None else None,
+            device=str(self.classifier.device),
             prediction_label=prediction_label,
             probabilities=probabilities,
             aggregate_probabilities=aggregate_probabilities,
@@ -550,22 +610,96 @@ class DigitTactileQtWindow(QMainWindow):
             not configured_window_name
             or configured_window_name == "DIGIT Tactile Demo"
         )
+        self.final_classes = _configured_class_list(
+            demo_cfg.get("final_classes"),
+            "demo.final_classes",
+        )
+        warning_cfg = demo_cfg.get("warning")
+        if not isinstance(warning_cfg, dict):
+            raise RuntimeError("demo.warning must be a mapping.")
+        self.warning_classes = _configured_class_list(
+            warning_cfg.get("classes"),
+            "demo.warning.classes",
+        )
+        for class_name in self.warning_classes:
+            translation_key = f"warning_{class_name}"
+            for language, translations in UI_TEXT.items():
+                if translation_key not in translations:
+                    raise RuntimeError(
+                        "demo.warning.classes includes "
+                        f"{class_name!r}, but UI_TEXT[{language!r}] is missing "
+                        f"{translation_key!r}."
+                    )
+        warning_duration_ms = warning_cfg.get("duration_ms")
+        if (
+            isinstance(warning_duration_ms, bool)
+            or not isinstance(warning_duration_ms, int)
+            or warning_duration_ms <= 0
+        ):
+            raise RuntimeError("demo.warning.duration_ms must be a positive integer.")
+        self.warning_duration_ms = warning_duration_ms
         self.aggregate_window_frames = max(
             1, int(demo_cfg.get("aggregate_window_frames", 60))
         )
-        self.class_names: list[str] = []
+        self.classifier = DemoClassifier(
+            str(demo_cfg["model_checkpoint"]),
+            model_cfg,
+            data_cfg,
+            device=str(demo_cfg.get("device", "auto")),
+        )
+        self.class_names = [str(name) for name in self.classifier.class_names]
+        if not self.class_names:
+            raise RuntimeError("Demo classifier did not provide any class names.")
+        missing_display_names = [
+            class_name
+            for class_name in self.class_names
+            if class_name not in CLASS_DISPLAY_NAMES["en"]
+        ]
+        if missing_display_names:
+            raise RuntimeError(
+                "Missing display translations for model classes: "
+                f"{', '.join(missing_display_names)}."
+            )
+        missing_final_classes = [
+            class_name
+            for class_name in self.final_classes
+            if class_name not in self.class_names
+        ]
+        if missing_final_classes:
+            raise RuntimeError(
+                "demo.final_classes contains classes not emitted by the model: "
+                f"{', '.join(missing_final_classes)}."
+            )
+        missing_warning_classes = [
+            class_name
+            for class_name in self.warning_classes
+            if class_name not in self.class_names
+        ]
+        if missing_warning_classes:
+            raise RuntimeError(
+                "demo.warning.classes contains classes not emitted by the model: "
+                f"{', '.join(missing_warning_classes)}."
+            )
+        self.final_class_indices = [
+            self.class_names.index(class_name) for class_name in self.final_classes
+        ]
         self.current_rows: list[ProbabilityRow] = []
+        self.raw_aggregate_rows: list[ProbabilityRow] = []
         self.aggregate_rows: list[ProbabilityRow] = []
         self.last_pixmap: Optional[QPixmap] = None
         self._last_camera_source: Optional[str] = None
-        self._last_device: Optional[str] = None
+        self._last_device: Optional[str] = str(self.classifier.device)
         self._last_status = "Starting demo."
         self._last_current_label: Optional[str] = None
         self._last_current_probabilities: Optional[np.ndarray] = None
         self._last_aggregate_probabilities: Optional[np.ndarray] = None
         self._last_aggregate_count = 0
+        self._active_warning_class: Optional[str] = None
         self._reinitialize_pending = True
         self._worker_stopping = False
+        self.warning_hide_timer = QTimer(self)
+        self.warning_hide_timer.setSingleShot(True)
+        self.warning_hide_timer.timeout.connect(self._hide_warning)
 
         self.resize(1120, 700)
         self._build_ui()
@@ -573,6 +707,7 @@ class DigitTactileQtWindow(QMainWindow):
         self.worker_thread = QThread(self)
         self.worker = CaptureInferenceWorker(
             demo_cfg,
+            self.classifier,
             model_cfg,
             data_cfg,
             self.language,
@@ -587,6 +722,7 @@ class DigitTactileQtWindow(QMainWindow):
         self.language_changed.connect(self.worker.set_language)
         self.worker_thread.finished.connect(self.worker.deleteLater)
         self.worker_thread.start()
+        self._rebuild_probability_rows()
 
         QShortcut(QKeySequence("R"), self, activated=self._request_reinitialize)
         QShortcut(QKeySequence("Q"), self, activated=self.close)
@@ -613,6 +749,7 @@ class DigitTactileQtWindow(QMainWindow):
         )
         self.video_stage.resized.connect(self._resize_video_pixmap)
         self.video_label = self.video_stage.label
+        self.warning_label = self.video_stage.warning_label
         video_layout.addWidget(self.video_stage, stretch=1)
 
         controls_layout = QHBoxLayout()
@@ -665,49 +802,46 @@ class DigitTactileQtWindow(QMainWindow):
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
         logo_rendered = False
-        if QSvgRenderer is not None and SECAI_LOGO_PATH.exists():
-            try:
-                renderer = QSvgRenderer(str(SECAI_LOGO_PATH))
-                if renderer.isValid():
-                    intrinsic_size = renderer.defaultSize()
-                    if (
-                        intrinsic_size.isValid()
-                        and intrinsic_size.width() > 0
-                        and intrinsic_size.height() > 0
-                    ):
-                        target_width = 220
-                        target_height = int(
-                            intrinsic_size.height()
-                            * (target_width / intrinsic_size.width())
-                        )
-                        target_size = QSize(target_width, max(1, target_height))
-                        device_pixel_ratio = max(1.0, self.devicePixelRatioF())
-                        pixmap_size = QSize(
-                            int(round(target_size.width() * device_pixel_ratio)),
-                            int(round(target_size.height() * device_pixel_ratio)),
-                        )
-                        logo_pixmap = QPixmap(pixmap_size)
-                        logo_pixmap.setDevicePixelRatio(device_pixel_ratio)
-                        logo_pixmap.fill(Qt.GlobalColor.transparent)
-                        painter = QPainter(logo_pixmap)
-                        painter.setRenderHints(
-                            QPainter.RenderHint.Antialiasing
-                            | QPainter.RenderHint.SmoothPixmapTransform
-                        )
-                        renderer.render(
-                            painter,
-                            QRectF(
-                                0,
-                                0,
-                                target_size.width(),
-                                target_size.height(),
-                            ),
-                        )
-                        painter.end()
-                        self.logo_label.setPixmap(logo_pixmap)
-                        logo_rendered = True
-            except Exception:
-                logo_rendered = False
+        if SECAI_LOGO_PATH.exists():
+            renderer = QSvgRenderer(str(SECAI_LOGO_PATH))
+            if renderer.isValid():
+                intrinsic_size = renderer.defaultSize()
+                if (
+                    intrinsic_size.isValid()
+                    and intrinsic_size.width() > 0
+                    and intrinsic_size.height() > 0
+                ):
+                    target_width = 220
+                    target_height = int(
+                        intrinsic_size.height()
+                        * (target_width / intrinsic_size.width())
+                    )
+                    target_size = QSize(target_width, max(1, target_height))
+                    device_pixel_ratio = max(1.0, self.devicePixelRatioF())
+                    pixmap_size = QSize(
+                        int(round(target_size.width() * device_pixel_ratio)),
+                        int(round(target_size.height() * device_pixel_ratio)),
+                    )
+                    logo_pixmap = QPixmap(pixmap_size)
+                    logo_pixmap.setDevicePixelRatio(device_pixel_ratio)
+                    logo_pixmap.fill(Qt.GlobalColor.transparent)
+                    painter = QPainter(logo_pixmap)
+                    painter.setRenderHints(
+                        QPainter.RenderHint.Antialiasing
+                        | QPainter.RenderHint.SmoothPixmapTransform
+                    )
+                    renderer.render(
+                        painter,
+                        QRectF(
+                            0,
+                            0,
+                            target_size.width(),
+                            target_size.height(),
+                        ),
+                    )
+                    painter.end()
+                    self.logo_label.setPixmap(logo_pixmap)
+                    logo_rendered = True
 
         if not logo_rendered:
             self.logo_label.setText("SECAI")
@@ -772,6 +906,17 @@ class DigitTactileQtWindow(QMainWindow):
         self.current_rows_layout.setContentsMargins(0, 0, 0, 0)
         self.current_rows_layout.setSpacing(6)
         details_layout.addWidget(self.current_rows_container)
+
+        details_layout.addWidget(self._separator(self.details_content))
+
+        self.raw_aggregate_title = QLabel(self.details_content)
+        self.raw_aggregate_title.setObjectName("sectionTitle")
+        details_layout.addWidget(self.raw_aggregate_title)
+        self.raw_aggregate_rows_container = QWidget(self.details_content)
+        self.raw_aggregate_rows_layout = QVBoxLayout(self.raw_aggregate_rows_container)
+        self.raw_aggregate_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.raw_aggregate_rows_layout.setSpacing(6)
+        details_layout.addWidget(self.raw_aggregate_rows_container)
 
         side_layout.addWidget(self.details_content)
 
@@ -845,6 +990,16 @@ class DigitTactileQtWindow(QMainWindow):
                 color: #28465e;
                 font-size: 16px;
                 line-height: 1.35;
+            }
+            QLabel#warningLabel {
+                background: rgba(247, 251, 252, 238);
+                color: #305886;
+                border: 2px solid #4eaec8;
+                border-radius: 12px;
+                padding: 11px 18px;
+                font-size: 17px;
+                font-weight: 700;
+                letter-spacing: 0.1px;
             }
             QLabel#languageLabel {
                 color: #557086;
@@ -1003,15 +1158,11 @@ class DigitTactileQtWindow(QMainWindow):
         self._set_details_visible(self.details_toggle.isChecked())
         self._set_reinitialize_pending(self._reinitialize_pending)
         self._refresh_runtime_labels()
-        for index, class_name in enumerate(self.class_names):
-            if index < len(self.current_rows):
-                self.current_rows[index].label.setText(
-                    self._display_class_name(class_name)
-                )
-            if index < len(self.aggregate_rows):
-                self.aggregate_rows[index].label.setText(
-                    self._display_class_name(class_name)
-                )
+        for row in self.current_rows + self.raw_aggregate_rows + self.aggregate_rows:
+            row.label.setText(self._display_class_name(row.class_name))
+        if self._active_warning_class is not None and self.warning_label.isVisible():
+            self.warning_label.setText(self._warning_message(self._active_warning_class))
+            self.video_stage.position_warning_label()
         self._refresh_prediction_titles()
 
     def _refresh_runtime_labels(self) -> None:
@@ -1030,6 +1181,9 @@ class DigitTactileQtWindow(QMainWindow):
         if not self.class_names:
             self.current_title.setText(
                 f"{self._tr('current')}: {self._tr('unavailable')}"
+            )
+            self.raw_aggregate_title.setText(
+                f"{self._tr('raw_aggregate')}: {self._tr('unavailable')}"
             )
             self.aggregate_title.setText(
                 f"{self._tr('prediction')}: {self._tr('unavailable')}"
@@ -1052,14 +1206,34 @@ class DigitTactileQtWindow(QMainWindow):
 
         aggregate_probabilities = self._last_aggregate_probabilities
         if aggregate_probabilities is not None and self._last_aggregate_count > 0:
-            aggregate_label = self._label_for_probabilities(aggregate_probabilities)
-            aggregate_confidence = float(np.max(aggregate_probabilities))
+            raw_aggregate_index = self._index_for_probabilities(
+                aggregate_probabilities
+            )
+            raw_aggregate_label = self.class_names[raw_aggregate_index]
+            raw_aggregate_confidence = float(
+                aggregate_probabilities[raw_aggregate_index]
+            )
+            self.raw_aggregate_title.setText(
+                f"{self._tr('raw_aggregate')}: "
+                f"{self._display_class_name(raw_aggregate_label)} "
+                f"({raw_aggregate_confidence:.0%})"
+            )
+
+            aggregate_index = self._index_for_probabilities(
+                aggregate_probabilities,
+                self.final_class_indices,
+            )
+            aggregate_label = self.class_names[aggregate_index]
+            aggregate_confidence = float(aggregate_probabilities[aggregate_index])
             self.aggregate_title.setText(
                 f"{self._tr('prediction')}: "
                 f"{self._display_class_name(aggregate_label)} "
                 f"({aggregate_confidence:.0%})"
             )
         else:
+            self.raw_aggregate_title.setText(
+                f"{self._tr('raw_aggregate')}: {self._tr('unavailable')}"
+            )
             self.aggregate_title.setText(
                 f"{self._tr('prediction')}: {self._tr('unavailable')}"
             )
@@ -1148,17 +1322,35 @@ class DigitTactileQtWindow(QMainWindow):
 
     def _rebuild_probability_rows(self) -> None:
         self._clear_layout(self.current_rows_layout)
+        self._clear_layout(self.raw_aggregate_rows_layout)
         self._clear_layout(self.aggregate_rows_layout)
-        self.current_rows = self._build_probability_rows(self.current_rows_layout)
-        self.aggregate_rows = self._build_probability_rows(self.aggregate_rows_layout)
+        all_class_indices = list(range(len(self.class_names)))
+        self.current_rows = self._build_probability_rows(
+            self.current_rows_layout,
+            all_class_indices,
+        )
+        self.raw_aggregate_rows = self._build_probability_rows(
+            self.raw_aggregate_rows_layout,
+            all_class_indices,
+        )
+        self.aggregate_rows = self._build_probability_rows(
+            self.aggregate_rows_layout,
+            self.final_class_indices,
+        )
         zeros = np.zeros(len(self.class_names), dtype=np.float32)
         self._update_probability_rows(self.current_rows, zeros)
+        self._update_probability_rows(self.raw_aggregate_rows, zeros)
         self._update_probability_rows(self.aggregate_rows, zeros)
         self._refresh_prediction_titles()
 
-    def _build_probability_rows(self, layout: QVBoxLayout) -> list[ProbabilityRow]:
+    def _build_probability_rows(
+        self,
+        layout: QVBoxLayout,
+        class_indices: list[int],
+    ) -> list[ProbabilityRow]:
         rows: list[ProbabilityRow] = []
-        for class_name in self.class_names:
+        for source_index in class_indices:
+            class_name = self.class_names[source_index]
             row_widget = QWidget(self)
             row_layout = QHBoxLayout(row_widget)
             row_layout.setContentsMargins(0, 0, 0, 0)
@@ -1181,7 +1373,15 @@ class DigitTactileQtWindow(QMainWindow):
             row_layout.addWidget(bar, stretch=1)
             row_layout.addWidget(percent)
             layout.addWidget(row_widget)
-            rows.append(ProbabilityRow(label=label, bar=bar, percent=percent))
+            rows.append(
+                ProbabilityRow(
+                    class_name=class_name,
+                    source_index=source_index,
+                    label=label,
+                    bar=bar,
+                    percent=percent,
+                )
+            )
         return rows
 
     def _update_predictions(self, result: FrameResult) -> None:
@@ -1200,7 +1400,14 @@ class DigitTactileQtWindow(QMainWindow):
         self._update_probability_rows(self.current_rows, current_probabilities)
 
         aggregate_probabilities = result.aggregate_probabilities
+        self._update_probability_rows(self.raw_aggregate_rows, aggregate_probabilities)
         self._update_probability_rows(self.aggregate_rows, aggregate_probabilities)
+        if result.aggregate_count > 0:
+            raw_aggregate_label = self._label_for_probabilities(
+                aggregate_probabilities
+            )
+            if raw_aggregate_label in self.warning_classes:
+                self._show_warning(raw_aggregate_label)
         self._refresh_prediction_titles()
 
     def _update_probability_rows(
@@ -1211,14 +1418,23 @@ class DigitTactileQtWindow(QMainWindow):
         if not rows:
             return
 
-        winner_index = int(np.argmax(probabilities)) if len(probabilities) else 0
-        for index, row in enumerate(rows):
-            probability = float(np.clip(probabilities[index], 0.0, 1.0))
+        max_source_index = max(row.source_index for row in rows)
+        if len(probabilities) <= max_source_index:
+            raise ValueError(
+                "Probability count does not match displayed class rows: "
+                f"{len(probabilities)} <= {max_source_index}."
+            )
+        winner_index = max(
+            (row.source_index for row in rows),
+            key=lambda source_index: float(probabilities[source_index]),
+        )
+        for row in rows:
+            probability = float(np.clip(probabilities[row.source_index], 0.0, 1.0))
             row.bar.setValue(int(round(probability * 1000)))
             row.percent.setText(f"{probability:.0%}")
             row.label.setStyleSheet(
                 "font-weight: 700; color: #305886;"
-                if index == winner_index and probability > 0.0
+                if row.source_index == winner_index and probability > 0.0
                 else "font-weight: 400; color: #17324f;"
             )
 
@@ -1270,8 +1486,50 @@ class DigitTactileQtWindow(QMainWindow):
         else:
             self.status_label.setStyleSheet("color: #305886;")
 
-    def _label_for_probabilities(self, probabilities: np.ndarray) -> str:
-        return self.class_names[int(np.argmax(probabilities))]
+    def _show_warning(self, class_name: str) -> None:
+        self._active_warning_class = class_name
+        self.warning_label.setText(self._warning_message(class_name))
+        self.warning_label.setVisible(True)
+        self.video_stage.position_warning_label()
+        self.warning_hide_timer.start(self.warning_duration_ms)
+
+    @Slot()
+    def _hide_warning(self) -> None:
+        self.warning_hide_timer.stop()
+        self._active_warning_class = None
+        self.warning_label.setVisible(False)
+
+    def _warning_message(self, class_name: str) -> str:
+        return self._tr(f"warning_{class_name}")
+
+    def _index_for_probabilities(
+        self,
+        probabilities: np.ndarray,
+        class_indices: Optional[list[int]] = None,
+    ) -> int:
+        indices = (
+            list(range(len(probabilities)))
+            if class_indices is None
+            else class_indices
+        )
+        if not indices:
+            raise RuntimeError("No class indices are available for prediction display.")
+        max_index = max(indices)
+        if len(probabilities) <= max_index:
+            raise ValueError(
+                "Probability count does not match class indices: "
+                f"{len(probabilities)} <= {max_index}."
+            )
+        return max(indices, key=lambda index: float(probabilities[index]))
+
+    def _label_for_probabilities(
+        self,
+        probabilities: np.ndarray,
+        class_indices: Optional[list[int]] = None,
+    ) -> str:
+        return self.class_names[
+            self._index_for_probabilities(probabilities, class_indices)
+        ]
 
     def resizeEvent(self, event: Any) -> None:
         super().resizeEvent(event)

@@ -25,3 +25,20 @@ gui:
 
 aggregate_window_frames: 30
 show_sensor_preview: true
+
+# Classes shown in the final aggregate overview. Raw aggregate probabilities are
+# still displayed unfiltered in the details panel.
+final_classes:
+  - nothing
+  - cotton
+  - wool
+  - curdory
+  - synthetic_leather
+  - teddy
+  - flower_fabric
+
+warning:
+  classes:
+    - finger
+    - 3dprint
+  duration_ms: 800
