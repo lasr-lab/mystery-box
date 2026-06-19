@@ -1,6 +1,46 @@
 # Mystery Box Tactile Demo
 
-DIGIT tactile sensor demo for classifying fabric and contact interactions with PyTorch models and Qt/OpenCV frontends.
+DIGIT tactile sensor demo for classifying fabrics.
+
+The 3D-printing hardware counterpart for this demo is available at https://github.com/lasr-lab/mystery-box-hardware.
+
+## Deployment and Running the Demo With Docker
+
+Docker is used for deploying and running the demo.
+
+```bash
+docker build \
+  --build-arg SECAI_DOWNLOAD_MODELS=true \
+  -t secai-demo-tactile \
+  https://github.com/lasr-lab/mystery-box.git
+```
+
+Run the Qt demo with access to the DIGIT camera and local X11 display:
+
+```bash
+xhost +local:docker
+
+docker run --rm -it \
+  --device=/dev/video2 \
+  -e DISPLAY=$DISPLAY \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+  secai-demo-tactile \
+  model=mobilevit_s \
+  demo.sensor.device_path=/dev/video2
+
+xhost -local:docker
+```
+
+Available model configs are `efficientnet_b0`, `mobilevit_s`, and `mobilevitv2_100`.
+You might need to reconfigure the device path to point to another `/dev/videoX`.
+
+If for some reason, the models should not be pre-downloaded, use this instead:
+
+```bash
+docker build -t secai-demo-tactile https://github.com/lasr-lab/mystery-box.git
+```
+
+This will download the models at container startup instead of build time.
 
 ## Repository Structure
 
@@ -10,31 +50,17 @@ src/datacollection/      DIGIT image capture UI
 src/demo/                Qt and OpenCV live demo frontends
 src/ML/                  datasets, model factory, training, inference utilities
 data/raw/digit_fabrics/  raw class folders used for training
-models/                  pretrained demo checkpoints, not committed to git
+models/                  pretrained demo checkpoints, download from HF
 outputs/                 Hydra training runs and trained checkpoints
 ```
 
 Data should end up in `data/raw/digit_fabrics/<class_name>/*.png`.
+
 Demo model files should end up in `models/efficientnet_b0.pt`, `models/mobilevit_s.pt`, and `models/mobilevitv2_100.pt`.
 
-## Install With Docker
+## Installation of Environment
 
-```bash
-docker build -t secai-demo-tactile https://github.com/lasr-lab/mystery-box.git
-```
-
-The Docker demo downloads missing model files from Hugging Face at startup. To bake the models into the image during build:
-
-```bash
-docker build \
-  --build-arg SECAI_DOWNLOAD_MODELS=true \
-  -t secai-demo-tactile \
-  https://github.com/lasr-lab/mystery-box.git
-```
-
-## Install With Mamba
-
-Create the local env:
+Create and activate the local development environment:
 
 ```bash
 mamba env create -f environment.yaml
@@ -82,23 +108,7 @@ models/mobilevit_s.pt
 models/mobilevitv2_100.pt
 ```
 
-## Run Demos
-
-Qt demo in Docker:
-
-```bash
-xhost +local:docker
-
-docker run --rm -it \
-  --device=/dev/video2 \
-  -e DISPLAY=$DISPLAY \
-  -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
-  secai-demo-tactile \
-  model=mobilevit_s \
-  demo.sensor.device_path=/dev/video2
-
-xhost -local:docker
-```
+## Run Demo
 
 Local Qt demo:
 
@@ -114,9 +124,17 @@ mamba activate secai_demo_server
 python -m src.demo.app demo=default model=mobilevit_s
 ```
 
-Available model configs: `efficientnet_b0`, `mobilevit_s`, `mobilevitv2_100`.
+If the DIGIT camera is not auto-detected, pass the device explicitly:
 
-## Data Collection
+```bash
+python -m src.demo.qt_app demo=default model=mobilevit_s demo.sensor.device_path=/dev/video2
+```
+
+Alternatively, change the config
+
+Available model configs are `efficientnet_b0`, `mobilevit_s`, and `mobilevitv2_100`.
+
+## Run Data Collection
 
 Collect DIGIT frames into `data/raw/digit_fabrics/<class_name>/`:
 
@@ -126,12 +144,6 @@ python -m src.datacollection.collector datacollection=default
 ```
 
 Keys: `0` nothing, `1` cotton, `2` wool, `3` curdory, `4` synthetic leather, `5` teddy, `6` flower fabric, `7` 3D print, `8` finger. Press `r` to reinitialize the camera and `q` or `Esc` to quit.
-
-If the DIGIT camera is not auto-detected, pass the device explicitly:
-
-```bash
-python -m src.datacollection.collector datacollection=default datacollection.sensor.device_path=/dev/video2
-```
 
 ## Train Models
 
